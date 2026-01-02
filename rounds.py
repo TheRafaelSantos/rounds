@@ -3168,9 +3168,9 @@ if __name__ == "__main__":
     next_id = max(round_ids) + 1
     print("\n" + "="*70)
     print(f"SUGESTÕES DE PRÓXIMO ROUND (Round {next_id}) — 'mais provável' pelo MODELO")
-    print("Obs: isso NÃO prevê sorteio real; é um gerador baseado nas regras estatísticas.")
     print("="*70)
 
     for i, d in enumerate(best, start=1):
         print(f"{i:>2}) Round {next_id}: {d['nums']} | soma={d['sum']} | ímpares={d['odds']} "
               f"| faixas={d['faixa']} | overlap c/último={d['overlap_last']} | score={d['score']:.3f}")
+
