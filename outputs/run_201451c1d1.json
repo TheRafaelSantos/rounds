@@ -1,0 +1,21 @@
+{
+  "ts": "2026-01-04T23:37:07",
+  "xlsx": "datalake_megasena.xlsx",
+  "portfolio": "mixed12",
+  "top_k": 12,
+  "n_samples": 200000,
+  "seed": 123,
+  "w_recent": 0.55,
+  "window_recent": 300,
+  "max_overlap_picks": 1,
+  "include_special": false,
+  "last_concurso": 2954,
+  "last_nums": [
+    1,
+    9,
+    37,
+    39,
+    42,
+    44
+  ]
+}

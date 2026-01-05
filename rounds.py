@@ -1,22 +1,5 @@
 # rounds.py
 # Mega-Sena Lab (acadêmico) - Runner/CLI
-# ------------------------------------------------------------
-# Requisitos:
-#   pip install pandas openpyxl
-#
-# Estrutura esperada:
-#   data.py  -> função load_datalake_xlsx(path) retornando df com colunas:
-#              concurso, d1..d6 (e idealmente df["nums"] = lista ordenada)
-#   model.py -> class ProfileModel(df, window_recent=...)
-#              método suggest(last_nums, n_samples, top_k, seed) -> lista
-#              contendo itens no formato: (score, nums, feats) OU dicts.
-#
-# Este runner:
-#  - carrega o datalake do Excel
-#  - gera Top-K previsões
-#  - salva CSV e logs para placar
-#  - avalia quando você passar o resultado real (--result)
-# ------------------------------------------------------------
 
 from __future__ import annotations
 
@@ -26,365 +9,328 @@ import datetime as dt
 import hashlib
 import json
 import os
-import sys
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Sequence
 
 import pandas as pd
 
-# Imports do seu projeto
-try:
-    from data import load_datalake_xlsx  # type: ignore
-except Exception as e:
-    raise ImportError(
-        "Não consegui importar load_datalake_xlsx de data.py. "
-        "Confirme que data.py existe e contém load_datalake_xlsx(path)."
-    ) from e
-
-try:
-    from model import ProfileModel  # type: ignore
-except Exception as e:
-    raise ImportError(
-        "Não consegui importar ProfileModel de model.py. "
-        "Confirme que model.py existe e contém a classe ProfileModel."
-    ) from e
-
-
-DEZENAS_COLS = ["d1", "d2", "d3", "d4", "d5", "d6"]
-
-
-# -------------------------
-# Utilidades
-# -------------------------
-def parse_nums(s: str) -> List[int]:
-    """
-    Aceita '1,2,3,4,5,6' ou '01 02 03 04 05 06' etc.
-    """
-    if not s:
-        return []
-    parts = []
-    for token in s.replace(";", ",").replace("|", ",").replace(" ", ",").split(","):
-        token = token.strip()
-        if not token:
-            continue
-        if not token.isdigit():
-            raise ValueError(f"Token inválido em --result: '{token}'")
-        parts.append(int(token))
-    nums = sorted(parts)
-    if len(nums) != 6:
-        raise ValueError(f"--result precisa ter 6 dezenas; veio {len(nums)} ({nums})")
-    if len(set(nums)) != 6:
-        raise ValueError(f"--result tem dezenas repetidas: {nums}")
-    if any(n < 1 or n > 60 for n in nums):
-        raise ValueError(f"--result fora de 1..60: {nums}")
-    return nums
-
-
-def fmt_nums(nums: Sequence[int]) -> str:
-    return ",".join(f"{n:02d}" for n in nums)
-
-
-def overlap_count(a: Sequence[int], b: Sequence[int]) -> int:
-    return len(set(a) & set(b))
+from data import load_datalake_xlsx
+from model import ProfileModel
 
 
 def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
-def now_iso() -> str:
-    # ISO sem micros para ficar legível
-    return dt.datetime.now().replace(microsecond=0).isoformat()
+def parse_nums(text: str, *, pick: int = 6) -> List[int]:
+    import re
+    nums = [int(x) for x in re.findall(r"\d+", text)]
+    if len(nums) != pick:
+        raise ValueError(f"Esperado {pick} dezenas em --result, veio {len(nums)}: {nums}")
+    if len(set(nums)) != pick:
+        raise ValueError(f"--result tem repetição: {nums}")
+    if any(n < 1 or n > 60 for n in nums):
+        raise ValueError(f"--result fora de 1..60: {nums}")
+    return sorted(nums)
 
 
-def make_run_id(payload: Dict[str, Any]) -> str:
-    """
-    Gera um run_id estável (hash curto) baseado no payload do experimento.
-    """
+def normalize_nums(nums: Sequence[int]) -> List[int]:
+    return sorted(int(x) for x in nums)
+
+
+def run_id_from_payload(payload: Dict[str, Any]) -> str:
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    h = hashlib.sha256(raw).hexdigest()[:12]
-    return h
+    return hashlib.sha256(raw).hexdigest()[:10]
 
 
-def normalize_suggest_item(item: Any) -> Tuple[float, List[int], Dict[str, Any]]:
-    """
-    Normaliza o retorno do model.suggest para um formato único:
-    (score: float, nums: [int...], feats: dict)
-
-    Suporta:
-    - tuple/list: (score, nums, feats)
-    - dict: {"score":..., "nums":[...], ...feats}
-    """
-    if isinstance(item, (tuple, list)) and len(item) >= 2:
-        score = float(item[0])
-        nums = list(item[1])
-        feats = dict(item[2]) if len(item) >= 3 and isinstance(item[2], dict) else {}
-        return score, nums, feats
-
-    if isinstance(item, dict):
-        if "nums" not in item or "score" not in item:
-            raise ValueError("Item dict do suggest precisa conter 'nums' e 'score'.")
-        score = float(item["score"])
-        nums = list(item["nums"])
-        feats = {k: v for k, v in item.items() if k not in ("score", "nums")}
-        return score, nums, feats
-
-    raise ValueError(f"Formato inesperado retornado por suggest(): {type(item)}")
+def compute_hits(pred: Sequence[int], real: Sequence[int]) -> int:
+    return len(set(pred) & set(real))
 
 
-# -------------------------
-# Logs
-# -------------------------
-def append_csv_row(path: str, fieldnames: List[str], row: Dict[str, Any]) -> None:
-    exists = os.path.exists(path)
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        if not exists:
-            w.writeheader()
-        w.writerow({k: row.get(k, "") for k in fieldnames})
+def _safe_union_fieldnames(path: str, new_fields: List[str]) -> List[str]:
+    if not os.path.exists(path):
+        return new_fields
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader, [])
+    except Exception:
+        header = []
+    if not header:
+        return new_fields
+    return list(dict.fromkeys(list(header) + list(new_fields)))
 
 
-# -------------------------
-# Main
-# -------------------------
+def _rewrite_csv_with_union(path: str, union_fields: List[str]) -> None:
+    if not os.path.exists(path):
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        old_fields = reader.fieldnames or []
+    if old_fields == union_fields:
+        return
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=union_fields)
+        w.writeheader()
+        for r in rows:
+            out = {k: r.get(k, "") for k in union_fields}
+            w.writerow(out)
+    os.replace(tmp_path, path)
+
+
+def _row_for_csv(run_id: str, ts: str, d: Dict[str, Any]) -> Dict[str, Any]:
+    nums = d["nums"]
+    nums_s = " ".join(f"{n:02d}" for n in nums)
+    return {
+        "run_id": run_id,
+        "ts": ts,
+        "bucket": d.get("bucket"),
+        "bucket_rank": d.get("bucket_rank"),
+        "nums": nums_s,
+        "typical_raw": d.get("typical_raw"),
+        "strategy_score": d.get("strategy_score"),
+        "overlap_last": d.get("overlap_last"),
+        "odds": d.get("feat_odds"),
+        "primes": d.get("feat_primes"),
+        "birthdays": d.get("feat_birthdays"),
+        "sum": d.get("feat_sum"),
+        "decades": d.get("feat_decades"),
+        "maxrun": d.get("feat_maxrun"),
+        "amp": d.get("feat_amp"),
+        "digits": d.get("feat_digits"),
+        "hot_raw": d.get("hot_raw"),
+        "cold_raw": d.get("cold_raw"),
+        "temporal_raw": d.get("temporal_raw"),
+        "z_typ": d.get("z_typ"),
+        "z_hot": d.get("z_hot"),
+        "z_cold": d.get("z_cold"),
+    }
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(
-        description="Mega-Sena Lab (acadêmico) - gera previsões e registra placar."
-    )
-    ap.add_argument("--xlsx", default="datalake_megasena.xlsx", help="Caminho do Excel do datalake.")
-    ap.add_argument("--include-special", action="store_true",
-                    help="Inclui concursos especiais (Mega da Virada) no histórico e na previsão.")
-    ap.add_argument("--window-recent", type=int, default=300, help="Janela recente (ex.: 300).")
-    ap.add_argument("--n-samples", type=int, default=200_000, help="Qtd de candidatos aleatórios.")
-    ap.add_argument("--top-k", type=int, default=20, help="Qtd de palpites no Top-K.")
-    ap.add_argument("--seed", type=int, default=123, help="Seed para reprodutibilidade.")
-    ap.add_argument("--w-recent", type=float, default=0.55,
-                    help="Peso da janela recente vs histórico (se seu model usar).")
-    ap.add_argument("--outdir", default="outputs", help="Pasta para salvar resultados (CSVs/logs).")
-    ap.add_argument("--result", default="", help="Resultado real (6 dezenas) para avaliação. Ex: '05,11,28,33,54,55'")
-    args = ap.parse_args()
+    p = argparse.ArgumentParser(description="Mega-Sena Lab - gerar previsões e registrar rodada")
+    p.add_argument("--xlsx", default="datalake_megasena.xlsx")
+    p.add_argument("--outdir", default="outputs")
+
+    p.add_argument("--portfolio", choices=["mixed12", "plain"], default="mixed12")
+    p.add_argument("--top-k", type=int, default=12)
+
+    p.add_argument("--n-samples", type=int, default=200_000)
+    p.add_argument("--seed", type=int, default=123)
+    p.add_argument("--w-recent", type=float, default=0.55)
+    p.add_argument("--window-recent", type=int, default=300)
+
+    p.add_argument("--max-overlap-picks", type=int, default=2)
+    p.add_argument("--include-special", action="store_true")
+    p.add_argument("--next-is-special", action="store_true")
+
+    p.add_argument("--result", default=None)
+
+    p.add_argument("--temporal-plus", action="store_true")
+    p.add_argument("--target-date", default=None)
+    p.add_argument("--temporal-recent-years", type=int, default=0)
+
+    args = p.parse_args()
 
     ensure_dir(args.outdir)
 
-    # -------------------------
-    # Load datalake
-    # -------------------------
-    df = load_datalake_xlsx(args.xlsx)
+    df = load_datalake_xlsx(args.xlsx).sort_values("concurso").reset_index(drop=True)
 
-    # Se o seu load_datalake_xlsx já filtra/normaliza, ótimo.
-    # Caso não filtre especial, fazemos aqui:
+    if "indicador_concurso_especial" in df.columns:
+        last_is_special = int(df["indicador_concurso_especial"].fillna(0).iloc[-1]) == 2
+        if last_is_special and (not args.include_special):
+            last_conc = int(df["concurso"].iloc[-1])
+            last_date = df["data_sorteio"].iloc[-1] if "data_sorteio" in df.columns else None
+            print("[AVISO] Seu último concurso no Excel é ESPECIAL (indicador_concurso_especial=2).")
+            print(f"        Concurso {last_conc} ({last_date.date() if hasattr(last_date,'date') else last_date}) será EXCLUÍDO porque --include-special está desligado.")
+            print("        Se você quiser incluir, rode com: --include-special\n")
+
     if (not args.include_special) and ("indicador_concurso_especial" in df.columns):
-        df = df[df["indicador_concurso_especial"].fillna(1).astype(int) != 2].copy()
+        df = df[df["indicador_concurso_especial"].fillna(0).astype(int) != 2].copy()
+        df = df.sort_values("concurso").reset_index(drop=True)
 
-    if "concurso" not in df.columns:
-        raise ValueError("Seu Excel precisa ter a coluna 'concurso'.")
+    last_nums = normalize_nums(df["nums"].iloc[-1])
+    last_concurso = int(df["concurso"].iloc[-1]) if "concurso" in df.columns else len(df)
 
-    # Garante nums
-    if "nums" not in df.columns:
-        # tenta montar de d1..d6
-        missing = [c for c in DEZENAS_COLS if c not in df.columns]
-        if missing:
-            raise ValueError(f"Não encontrei colunas {missing} e também não existe df['nums'].")
-        df["nums"] = df[DEZENAS_COLS].apply(
-            lambda r: sorted([int(x) for x in r.values if pd.notna(x)]),
-            axis=1
-        )
+    print(f"Concursos carregados: {len(df)} | Último concurso: {last_concurso} -> {last_nums}")
 
-    df = df.sort_values("concurso").reset_index(drop=True)
-
-    if len(df) < 10:
-        raise ValueError("Histórico muito pequeno no datalake para rodar um laboratório legal.")
-
-    last_row = df.iloc[-1]
-    last_concurso = int(last_row["concurso"])
-    last_nums = list(last_row["nums"])
-
-    next_concurso = last_concurso + 1
-
-    # -------------------------
-    # Build model
-    # -------------------------
     model = ProfileModel(df, window_recent=args.window_recent)
 
-    # Alguns modelos aceitam w_recent na score/suggest. Se o seu não aceitar, não tem problema:
-    # a função normalize_suggest_item já cuida do retorno; aqui só tentamos chamar do jeito mais útil.
-    try:
-        raw_best = model.suggest(
-            last_nums=last_nums,
-            n_samples=args.n_samples,
-            top_k=args.top_k,
-            seed=args.seed,
-            w_recent=args.w_recent,  # pode falhar se o seu método não aceitar
-        )
-    except TypeError:
-        raw_best = model.suggest(
-            last_nums=last_nums,
-            n_samples=args.n_samples,
-            top_k=args.top_k,
-            seed=args.seed,
-        )
-
-    best: List[Tuple[float, List[int], Dict[str, Any]]] = [normalize_suggest_item(x) for x in raw_best]
-
-    # -------------------------
-    # Print summary
-    # -------------------------
-    print("=" * 88)
-    print("MEGA-SENA LAB (acadêmico) — PREVISÕES")
-    print("=" * 88)
-    print(f"Datalake: {args.xlsx}")
-    print(f"Concursos no histórico (após filtros): {len(df)}")
-    if "data_sorteio" in df.columns and pd.notna(last_row.get("data_sorteio", None)):
-        try:
-            d = pd.to_datetime(last_row["data_sorteio"]).date()
-            print(f"Último concurso: {last_concurso} ({d}) | dezenas: {fmt_nums(last_nums)}")
-        except Exception:
-            print(f"Último concurso: {last_concurso} | dezenas: {fmt_nums(last_nums)}")
-    else:
-        print(f"Último concurso: {last_concurso} | dezenas: {fmt_nums(last_nums)}")
-
-    print(f"Próximo concurso (previsto): {next_concurso}")
-    print(f"Amostras: {args.n_samples:,} | Top-K: {args.top_k} | Seed: {args.seed}")
-    print("-" * 88)
-
-    # -------------------------
-    # Save frozen predictions CSV + append history logs
-    # -------------------------
-    timestamp = now_iso()
-    exp_payload = {
-        "timestamp": timestamp,
-        "xlsx": os.path.abspath(args.xlsx),
-        "include_special": bool(args.include_special),
-        "window_recent": int(args.window_recent),
-        "n_samples": int(args.n_samples),
+    now = dt.datetime.now()
+    payload = {
+        "ts": now.isoformat(timespec="seconds"),
+        "xlsx": os.path.basename(args.xlsx),
+        "portfolio": args.portfolio,
         "top_k": int(args.top_k),
+        "n_samples": int(args.n_samples),
         "seed": int(args.seed),
         "w_recent": float(args.w_recent),
+        "window_recent": int(args.window_recent),
+        "max_overlap_picks": int(args.max_overlap_picks),
+        "include_special": bool(args.include_special),
         "last_concurso": last_concurso,
         "last_nums": last_nums,
-        "next_concurso": next_concurso,
+        "temporal_plus": bool(args.temporal_plus),
+        "target_date": args.target_date,
+        "temporal_recent_years": int(args.temporal_recent_years),
+        "next_is_special": bool(args.next_is_special),
     }
-    run_id = make_run_id(exp_payload)
+    rid = run_id_from_payload(payload)
 
-    frozen_csv = os.path.join(args.outdir, f"predicoes_concurso_{next_concurso}_run_{run_id}.csv")
-    history_csv = os.path.join(args.outdir, "predictions_history.csv")
-    eval_csv = os.path.join(args.outdir, "evaluation_history.csv")
+    predictions: List[Dict[str, Any]] = []
 
-    # monta dataframe das previsões
-    rows = []
-    for rank, (score, nums, feats) in enumerate(best, start=1):
-        row = {
-            "run_id": run_id,
-            "timestamp": timestamp,
-            "rank": rank,
-            "next_concurso": next_concurso,
-            "last_concurso": last_concurso,
-            "last_nums": fmt_nums(last_nums),
-            "nums": fmt_nums(nums),
-            "score": score,
-            "overlap_last": overlap_count(nums, last_nums),
-        }
-        # coloca feats (se existirem) com prefixo feat_
-        for k, v in feats.items():
-            row[f"feat_{k}"] = v
-        rows.append(row)
+    if args.portfolio == "mixed12":
+        preds = model.suggest_portfolio_mixed12(
+            last_nums=last_nums,
+            n_samples=args.n_samples,
+            seed=args.seed,
+            w_recent=args.w_recent,
+            max_overlap_between_picks=args.max_overlap_picks,
+        )
+        for d in preds:
+            predictions.append(_row_for_csv(rid, payload["ts"], d))
 
-    pred_df = pd.DataFrame(rows)
-    pred_df.to_csv(frozen_csv, index=False, encoding="utf-8")
+        if args.temporal_plus:
+            target_date = None
+            if args.target_date:
+                target_date = pd.to_datetime(args.target_date)
+            elif "data_proximo_concurso" in df.columns and (not df["data_proximo_concurso"].isna().all()):
+                target_date = pd.to_datetime(df["data_proximo_concurso"].iloc[-1])
 
-    # append em predictions_history.csv (log incremental)
-    # (monta campo fixo + feats dinâmicos)
-    base_fields = [
-        "run_id", "timestamp", "rank", "next_concurso", "last_concurso", "last_nums",
-        "nums", "score", "overlap_last"
-    ]
-    feat_fields = sorted([c for c in pred_df.columns if c.startswith("feat_")])
-    fields = base_fields + feat_fields
+            if target_date is None or pd.isna(target_date):
+                print("\n[AVISO] temporal_plus ligado, mas não encontrei target_date.")
+                print("        Passe --target-date YYYY-MM-DD ou garanta data_proximo_concurso no Excel.")
+            else:
+                already_picks = [d["nums"] for d in preds]
+                plus_rows, prof = model.suggest_temporal_plus3(
+                    last_nums=last_nums,
+                    target_date=target_date,
+                    n_samples=args.n_samples,
+                    seed=args.seed + 7,
+                    w_recent=args.w_recent,
+                    max_overlap_between_picks=args.max_overlap_picks,
+                    already_picks=already_picks,
+                    recent_years_for_temporal=args.temporal_recent_years,
+                    next_is_special=args.next_is_special,
+                )
+                for d in plus_rows:
+                    predictions.append(_row_for_csv(rid, payload["ts"], d))
 
-    # garante que todas as colunas existam nos rows
-    for r in rows:
-        for c in feat_fields:
-            r.setdefault(c, "")
+                tdir = os.path.join(args.outdir, "temporal")
+                ensure_dir(tdir)
+                with open(os.path.join(tdir, f"profile_temporal_{rid}.json"), "w", encoding="utf-8") as f:
+                    json.dump(prof, f, ensure_ascii=False, indent=2)
 
-    # grava
-    if not os.path.exists(history_csv):
-        pred_df[fields].to_csv(history_csv, index=False, encoding="utf-8")
     else:
-        # append (sem reescrever header)
-        with open(history_csv, "a", newline="", encoding="utf-8") as f:
-            pred_df[fields].to_csv(f, index=False, header=False)
-
-    # -------------------------
-    # Exibe Top-K no terminal
-    # -------------------------
-    for rank, (score, nums, feats) in enumerate(best, start=1):
-        ov = overlap_count(nums, last_nums)
-        # imprime algumas features comuns se existirem
-        s = feats.get("sum", "")
-        odds = feats.get("odds", "")
-        primes = feats.get("primes", "")
-        birthdays = feats.get("birthdays", "")
-        maxrun = feats.get("maxrun", "")
-
-        extra = []
-        if s != "": extra.append(f"soma={s}")
-        if odds != "": extra.append(f"ímpares={odds}")
-        if primes != "": extra.append(f"primos={primes}")
-        if birthdays != "": extra.append(f"1-31={birthdays}")
-        if maxrun != "": extra.append(f"max_run={maxrun}")
-
-        extra_txt = " | " + " | ".join(extra) if extra else ""
-        print(f"{rank:>2}) {fmt_nums(nums)} | overlap_último={ov} | score={score:.6f}{extra_txt}")
-
-    print("-" * 88)
-    print(f"CSV congelado: {frozen_csv}")
-    print(f"Log previsões:  {history_csv}")
-
-    # -------------------------
-    # Avaliação (se o usuário passar o resultado real)
-    # -------------------------
-    if args.result.strip():
-        real = parse_nums(args.result.strip())
-        print("=" * 88)
-        print(f"AVALIAÇÃO — Resultado informado: {fmt_nums(real)}")
-        print("=" * 88)
-
-        eval_fields = [
-            "run_id", "timestamp", "next_concurso", "result_nums",
-            "rank", "pred_nums", "hits", "overlap_last"
-        ]
-
+        best = model.suggest(
+            last_nums=last_nums,
+            n_samples=args.n_samples,
+            top_k=args.top_k,
+            seed=args.seed,
+            w_recent=args.w_recent,
+        )
         for rank, (score, nums, feats) in enumerate(best, start=1):
-            hits = overlap_count(nums, real)
-            ov_last = overlap_count(nums, last_nums)
-            print(f"{rank:>2}) pred={fmt_nums(nums)} | hits={hits} | overlap_último={ov_last} | score={score:.6f}")
+            d = {
+                "bucket": "plain",
+                "bucket_rank": rank,
+                "nums": nums,
+                "typical_raw": score,
+                "strategy_score": score,
+                "overlap_last": feats.get("overlap_last", 0),
+                "feat_odds": feats.get("odds"),
+                "feat_primes": feats.get("primes"),
+                "feat_birthdays": feats.get("birthdays"),
+                "feat_sum": feats.get("sum"),
+                "feat_decades": None,
+                "feat_maxrun": None,
+                "feat_amp": None,
+                "feat_digits": None,
+                "hot_raw": None,
+                "cold_raw": None,
+                "temporal_raw": None,
+                "z_typ": None,
+                "z_hot": None,
+                "z_cold": None,
+            }
+            predictions.append(_row_for_csv(rid, payload["ts"], d))
 
-            append_csv_row(
-                eval_csv,
-                eval_fields,
-                {
-                    "run_id": run_id,
-                    "timestamp": timestamp,
-                    "next_concurso": next_concurso,
-                    "result_nums": fmt_nums(real),
-                    "rank": rank,
-                    "pred_nums": fmt_nums(nums),
-                    "hits": hits,
-                    "overlap_last": ov_last,
-                },
-            )
+    print("\n" + "=" * 78)
+    title = "PORTFOLIO MIXED-12 (4 estratégias x 3)" if args.portfolio == "mixed12" else f"TOP-{len(predictions)} (plain)"
+    if args.portfolio == "mixed12" and args.temporal_plus:
+        title += " + TEMPORAL PLUS-3"
+    print(title)
+    print("=" * 78)
 
-        print("-" * 88)
-        print(f"Log avaliação:  {eval_csv}")
+    def bucket_title(b: str) -> str:
+        return {
+            "typical_top": "TÍPICOS (alto score típico)",
+            "typical_diverse": "TÍPICOS (diversos entre si)",
+            "hot_recency": "HOT RECENCY (quentes na janela recente)",
+            "cold_overdue": "COLD/OVERDUE (mais tempo sem sair)",
+            "temporal_period": "TEMPORAL (perfil do período-alvo)",
+            "temporal_cold": "TEMPORAL + COLD (frio com viés temporal)",
+            "temporal_typical": "TEMPORAL + TÍPICO (alto típico com viés temporal)",
+            "plain": "PLAIN (top-k típico)",
+        }.get(b, b)
 
-    print("=" * 88)
-    print(f"RUN_ID: {run_id}")
-    print("=" * 88)
+    predictions_sorted = sorted(predictions, key=lambda r: (str(r["bucket"]), int(r["bucket_rank"])))
+    current_bucket = None
+    for row in predictions_sorted:
+        if row["bucket"] != current_bucket:
+            current_bucket = row["bucket"]
+            print("\n" + bucket_title(str(current_bucket)))
+            print("-" * 78)
+        print(f"{int(row['bucket_rank']):>2}) {row['nums']} | sum={row.get('sum')} | odds={row.get('odds')} | primes={row.get('primes')} "
+              f"| overlap_last={row.get('overlap_last')} | strategy={float(row.get('strategy_score') or 0.0):.3f}")
+
+    meta_path = os.path.join(args.outdir, f"run_{rid}.json")
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    csv_path = os.path.join(args.outdir, "predictions.csv")
+    new_fields = list(predictions[0].keys()) if predictions else []
+    union_fields = _safe_union_fieldnames(csv_path, new_fields)
+    _rewrite_csv_with_union(csv_path, union_fields)
+
+    if predictions:
+        file_exists = os.path.exists(csv_path)
+        with open(csv_path, "a", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=union_fields)
+            if (not file_exists) or os.path.getsize(csv_path) == 0:
+                w.writeheader()
+            for r in predictions:
+                out = {k: r.get(k, "") for k in union_fields}
+                w.writerow(out)
+
+    print(f"\nRun salvo: {meta_path}")
+    print(f"Log consolidado: {csv_path}")
+
+    if args.result:
+        real = parse_nums(args.result)
+        eval_rows = []
+        for row in predictions:
+            pred_nums = [int(x) for x in row["nums"].split()]
+            hits = compute_hits(pred_nums, real)
+            eval_rows.append({
+                "run_id": row["run_id"],
+                "bucket": row["bucket"],
+                "bucket_rank": row["bucket_rank"],
+                "pred": row["nums"],
+                "real": " ".join(f"{n:02d}" for n in real),
+                "hits": hits,
+            })
+
+        eval_path = os.path.join(args.outdir, f"eval_{rid}.csv")
+        with open(eval_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=list(eval_rows[0].keys()))
+            w.writeheader()
+            for r in eval_rows:
+                w.writerow(r)
+        print(f"\nAvaliação salva: {eval_path}")
+
     return 0
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as e:
-        print(f"\n[ERRO] {type(e).__name__}: {e}", file=sys.stderr)
-        raise
+    raise SystemExit(main())

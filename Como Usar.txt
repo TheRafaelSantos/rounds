@@ -1,0 +1,26 @@
+## Criar 12 jogos default
+python rounds.py --xlsx datalake_megasena.xlsx --n-samples 200000 --seed 123 --max-overlap-picks 1 --include-special --temporal-plus
+
+
+## Ajustar “diversidade” (mais espalhado)
+python rounds.py --xlsx datalake_megasena.xlsx --n-samples 200000 --seed 123 --max-overlap-picks 1
+
+
+## Voltar ao modo antigo (top-k típico)
+python rounds.py --portfolio plain --top-k 20 --xlsx datalake_megasena.xlsx --n-samples 200000 --seed 123
+
+
+## Usar dados da mega da virada e regular
+python rounds.py --xlsx datalake_megasena.xlsx --n-samples 200000 --seed 123 --max-overlap-picks 1 --include-special --temporal-plus --next-is-special
+
+
+
+## Analises por tempo
+python analysis_temporal.py --xlsx datalake_megasena.xlsx --recent-years 10 --do-aligned --aligned-max-dist 5
+
+
+## Para focar só no “mundo recente” (ex.: últimos 10 anos):
+python rounds.py --xlsx datalake_megasena.xlsx --n-samples 200000 --seed 123 --max-overlap-picks 1 --include-special --temporal-plus --temporal-recent-years 10
+
+## se ainda não tiver data preenchuda, passe a data explicitamente
+python rounds.py --xlsx datalake_megasena.xlsx --n-samples 200000 --seed 123 --max-overlap-picks 1 --include-special --temporal-plus --target-date 2026-01-06
