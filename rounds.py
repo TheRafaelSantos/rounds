@@ -9,14 +9,17 @@ import datetime as dt
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Sequence, Optional
 
 import pandas as pd
 
-from data import load_datalake_xlsx
+from data import load_datalake_xlsx, DEZENAS
 from model import ProfileModel
 
 
+# ----------------------------
+# helpers
+# ----------------------------
 def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
@@ -47,6 +50,7 @@ def compute_hits(pred: Sequence[int], real: Sequence[int]) -> int:
 
 
 def _safe_union_fieldnames(path: str, new_fields: List[str]) -> List[str]:
+    """Retorna união (header_antigo ∪ header_novo) preservando ordem."""
     if not os.path.exists(path):
         return new_fields
     try:
@@ -61,6 +65,7 @@ def _safe_union_fieldnames(path: str, new_fields: List[str]) -> List[str]:
 
 
 def _rewrite_csv_with_union(path: str, union_fields: List[str]) -> None:
+    """Se o CSV existir com header antigo, reescreve com header união preservando dados."""
     if not os.path.exists(path):
         return
     with open(path, "r", encoding="utf-8") as f:
@@ -69,6 +74,7 @@ def _rewrite_csv_with_union(path: str, union_fields: List[str]) -> None:
         old_fields = reader.fieldnames or []
     if old_fields == union_fields:
         return
+
     tmp_path = path + ".tmp"
     with open(tmp_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=union_fields)
@@ -82,6 +88,7 @@ def _rewrite_csv_with_union(path: str, union_fields: List[str]) -> None:
 def _row_for_csv(run_id: str, ts: str, d: Dict[str, Any]) -> Dict[str, Any]:
     nums = d["nums"]
     nums_s = " ".join(f"{n:02d}" for n in nums)
+
     return {
         "run_id": run_id,
         "ts": ts,
@@ -108,6 +115,46 @@ def _row_for_csv(run_id: str, ts: str, d: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _ensure_nums_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Garante df['nums'] como lista ordenada de 6 ints."""
+    if "nums" in df.columns:
+        return df
+
+    # tenta usar DEZENAS (d1..d6)
+    if all(c in df.columns for c in DEZENAS):
+        df = df.copy()
+        df["nums"] = df[DEZENAS].apply(lambda r: sorted(int(x) for x in r.tolist()), axis=1)
+        return df
+
+    # fallback: tenta achar colunas d1..d6 (mesmo nome) caso DEZENAS tenha mudado
+    cols = [c for c in ["d1", "d2", "d3", "d4", "d5", "d6"] if c in df.columns]
+    if len(cols) == 6:
+        df = df.copy()
+        df["nums"] = df[cols].apply(lambda r: sorted(int(x) for x in r.tolist()), axis=1)
+        return df
+
+    raise ValueError("Não encontrei df['nums'] e nem colunas d1..d6 (DEZENAS) no Excel.")
+
+
+def _resolve_target_date(df: pd.DataFrame, arg_target_date: Optional[str]) -> Optional[pd.Timestamp]:
+    """Resolve target_date (data do próximo concurso) de --target-date ou do Excel."""
+    if arg_target_date:
+        t = pd.to_datetime(arg_target_date, errors="coerce")
+        if not pd.isna(t):
+            return t
+
+    # tenta Excel
+    if "data_proximo_concurso" in df.columns and (not df["data_proximo_concurso"].isna().all()):
+        t = pd.to_datetime(df["data_proximo_concurso"].iloc[-1], errors="coerce")
+        if not pd.isna(t):
+            return t
+
+    return None
+
+
+# ----------------------------
+# main
+# ----------------------------
 def main() -> int:
     p = argparse.ArgumentParser(description="Mega-Sena Lab - gerar previsões e registrar rodada")
     p.add_argument("--xlsx", default="datalake_megasena.xlsx")
@@ -122,33 +169,43 @@ def main() -> int:
     p.add_argument("--window-recent", type=int, default=300)
 
     p.add_argument("--max-overlap-picks", type=int, default=2)
-    p.add_argument("--include-special", action="store_true")
-    p.add_argument("--next-is-special", action="store_true")
+    p.add_argument("--include-special", action="store_true", help="Inclui concursos especiais (Mega da Virada)")
+    p.add_argument("--next-is-special", action="store_true", help="Indica que o PRÓXIMO concurso será especial (para misturar perfil)")
 
-    p.add_argument("--result", default=None)
+    p.add_argument("--result", default=None, help="Resultado real para avaliar: '01 02 03 04 05 06'")
 
-    p.add_argument("--temporal-plus", action="store_true")
-    p.add_argument("--target-date", default=None)
-    p.add_argument("--temporal-recent-years", type=int, default=0)
+    p.add_argument("--temporal-plus", action="store_true", help="Adiciona +3 jogos com perfil temporal")
+    p.add_argument("--target-date", default=None, help="Data alvo (YYYY-MM-DD). Se vazio, tenta data_proximo_concurso do Excel.")
+    p.add_argument("--temporal-recent-years", type=int, default=0, help="Se >0, perfil temporal usa só últimos N anos")
 
     args = p.parse_args()
 
     ensure_dir(args.outdir)
 
     df = load_datalake_xlsx(args.xlsx).sort_values("concurso").reset_index(drop=True)
+    df = _ensure_nums_column(df)
 
+    # Normaliza data_sorteio (se existir)
+    if "data_sorteio" in df.columns:
+        df["data_sorteio"] = pd.to_datetime(df["data_sorteio"], errors="coerce")
+
+    # Se o último concurso do Excel for especial e você não incluiu especiais, avisa
     if "indicador_concurso_especial" in df.columns:
         last_is_special = int(df["indicador_concurso_especial"].fillna(0).iloc[-1]) == 2
         if last_is_special and (not args.include_special):
-            last_conc = int(df["concurso"].iloc[-1])
+            last_conc = int(df["concurso"].iloc[-1]) if "concurso" in df.columns else len(df)
             last_date = df["data_sorteio"].iloc[-1] if "data_sorteio" in df.columns else None
             print("[AVISO] Seu último concurso no Excel é ESPECIAL (indicador_concurso_especial=2).")
             print(f"        Concurso {last_conc} ({last_date.date() if hasattr(last_date,'date') else last_date}) será EXCLUÍDO porque --include-special está desligado.")
             print("        Se você quiser incluir, rode com: --include-special\n")
 
+    # Filtra especiais se necessário
     if (not args.include_special) and ("indicador_concurso_especial" in df.columns):
         df = df[df["indicador_concurso_especial"].fillna(0).astype(int) != 2].copy()
         df = df.sort_values("concurso").reset_index(drop=True)
+
+    if len(df) == 0:
+        raise ValueError("Após filtros, df ficou vazio. Verifique seu Excel / flags de especiais.")
 
     last_nums = normalize_nums(df["nums"].iloc[-1])
     last_concurso = int(df["concurso"].iloc[-1]) if "concurso" in df.columns else len(df)
@@ -169,17 +226,20 @@ def main() -> int:
         "window_recent": int(args.window_recent),
         "max_overlap_picks": int(args.max_overlap_picks),
         "include_special": bool(args.include_special),
-        "last_concurso": last_concurso,
+        "next_is_special": bool(args.next_is_special),
+        "last_concurso": int(last_concurso),
         "last_nums": last_nums,
         "temporal_plus": bool(args.temporal_plus),
         "target_date": args.target_date,
         "temporal_recent_years": int(args.temporal_recent_years),
-        "next_is_special": bool(args.next_is_special),
     }
     rid = run_id_from_payload(payload)
 
     predictions: List[Dict[str, Any]] = []
 
+    # ----------------------------
+    # portfolio
+    # ----------------------------
     if args.portfolio == "mixed12":
         preds = model.suggest_portfolio_mixed12(
             last_nums=last_nums,
@@ -191,23 +251,21 @@ def main() -> int:
         for d in preds:
             predictions.append(_row_for_csv(rid, payload["ts"], d))
 
+        # temporal +3
         if args.temporal_plus:
-            target_date = None
-            if args.target_date:
-                target_date = pd.to_datetime(args.target_date)
-            elif "data_proximo_concurso" in df.columns and (not df["data_proximo_concurso"].isna().all()):
-                target_date = pd.to_datetime(df["data_proximo_concurso"].iloc[-1])
+            target_date = _resolve_target_date(df, args.target_date)
 
             if target_date is None or pd.isna(target_date):
                 print("\n[AVISO] temporal_plus ligado, mas não encontrei target_date.")
                 print("        Passe --target-date YYYY-MM-DD ou garanta data_proximo_concurso no Excel.")
             else:
                 already_picks = [d["nums"] for d in preds]
+
                 plus_rows, prof = model.suggest_temporal_plus3(
                     last_nums=last_nums,
                     target_date=target_date,
                     n_samples=args.n_samples,
-                    seed=args.seed + 7,
+                    seed=args.seed + 7,  # muda seed pra não duplicar pool
                     w_recent=args.w_recent,
                     max_overlap_between_picks=args.max_overlap_picks,
                     already_picks=already_picks,
@@ -222,6 +280,9 @@ def main() -> int:
                 with open(os.path.join(tdir, f"profile_temporal_{rid}.json"), "w", encoding="utf-8") as f:
                     json.dump(prof, f, ensure_ascii=False, indent=2)
 
+    # ----------------------------
+    # plain top-k
+    # ----------------------------
     else:
         best = model.suggest(
             last_nums=last_nums,
@@ -242,10 +303,10 @@ def main() -> int:
                 "feat_primes": feats.get("primes"),
                 "feat_birthdays": feats.get("birthdays"),
                 "feat_sum": feats.get("sum"),
-                "feat_decades": None,
-                "feat_maxrun": None,
-                "feat_amp": None,
-                "feat_digits": None,
+                "feat_decades": feats.get("decades"),
+                "feat_maxrun": feats.get("maxrun"),
+                "feat_amp": feats.get("amp"),
+                "feat_digits": feats.get("digits"),
                 "hot_raw": None,
                 "cold_raw": None,
                 "temporal_raw": None,
@@ -255,6 +316,9 @@ def main() -> int:
             }
             predictions.append(_row_for_csv(rid, payload["ts"], d))
 
+    # ----------------------------
+    # print output
+    # ----------------------------
     print("\n" + "=" * 78)
     title = "PORTFOLIO MIXED-12 (4 estratégias x 3)" if args.portfolio == "mixed12" else f"TOP-{len(predictions)} (plain)"
     if args.portfolio == "mixed12" and args.temporal_plus:
@@ -264,36 +328,68 @@ def main() -> int:
 
     def bucket_title(b: str) -> str:
         return {
-            "typical_top": "TÍPICOS (alto score típico)",
-            "typical_diverse": "TÍPICOS (diversos entre si)",
-            "hot_recency": "HOT RECENCY (quentes na janela recente)",
             "cold_overdue": "COLD/OVERDUE (mais tempo sem sair)",
-            "temporal_period": "TEMPORAL (perfil do período-alvo)",
+            "hot_recency": "HOT RECENCY (quentes na janela recente)",
             "temporal_cold": "TEMPORAL + COLD (frio com viés temporal)",
+            "temporal_period": "TEMPORAL (perfil do período-alvo)",
             "temporal_typical": "TEMPORAL + TÍPICO (alto típico com viés temporal)",
+            "typical_diverse": "TÍPICOS (diversos entre si)",
+            "typical_top": "TÍPICOS (alto score típico)",
             "plain": "PLAIN (top-k típico)",
         }.get(b, b)
 
-    predictions_sorted = sorted(predictions, key=lambda r: (str(r["bucket"]), int(r["bucket_rank"])))
+    bucket_order = {
+        "cold_overdue": 10,
+        "hot_recency": 20,
+        "temporal_cold": 30,
+        "temporal_period": 40,
+        "temporal_typical": 50,
+        "typical_diverse": 60,
+        "typical_top": 70,
+        "plain": 80,
+    }
+
+    def safe_int(x: Any, default: int = 999) -> int:
+        try:
+            return int(x)
+        except Exception:
+            return default
+
+    predictions_sorted = sorted(
+        predictions,
+        key=lambda r: (bucket_order.get(str(r.get("bucket")), 999), safe_int(r.get("bucket_rank"), 999)),
+    )
+
     current_bucket = None
     for row in predictions_sorted:
-        if row["bucket"] != current_bucket:
-            current_bucket = row["bucket"]
-            print("\n" + bucket_title(str(current_bucket)))
+        b = str(row.get("bucket"))
+        if b != current_bucket:
+            current_bucket = b
+            print("\n" + bucket_title(b))
             print("-" * 78)
-        print(f"{int(row['bucket_rank']):>2}) {row['nums']} | sum={row.get('sum')} | odds={row.get('odds')} | primes={row.get('primes')} "
-              f"| overlap_last={row.get('overlap_last')} | strategy={float(row.get('strategy_score') or 0.0):.3f}")
 
+        # nums já é string no CSV
+        nums_s = str(row.get("nums", ""))
+        print(
+            f"{safe_int(row.get('bucket_rank'), 0):>2}) {nums_s} "
+            f"| sum={row.get('sum')} | odds={row.get('odds')} | primes={row.get('primes')} "
+            f"| overlap_last={row.get('overlap_last')} | strategy={float(row.get('strategy_score') or 0.0):.3f}"
+        )
+
+    # ----------------------------
+    # save meta + predictions.csv
+    # ----------------------------
     meta_path = os.path.join(args.outdir, f"run_{rid}.json")
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
     csv_path = os.path.join(args.outdir, "predictions.csv")
-    new_fields = list(predictions[0].keys()) if predictions else []
-    union_fields = _safe_union_fieldnames(csv_path, new_fields)
-    _rewrite_csv_with_union(csv_path, union_fields)
 
     if predictions:
+        new_fields = list(predictions[0].keys())
+        union_fields = _safe_union_fieldnames(csv_path, new_fields)
+        _rewrite_csv_with_union(csv_path, union_fields)
+
         file_exists = os.path.exists(csv_path)
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=union_fields)
@@ -306,11 +402,14 @@ def main() -> int:
     print(f"\nRun salvo: {meta_path}")
     print(f"Log consolidado: {csv_path}")
 
-    if args.result:
+    # ----------------------------
+    # optional evaluation
+    # ----------------------------
+    if args.result and predictions:
         real = parse_nums(args.result)
         eval_rows = []
         for row in predictions:
-            pred_nums = [int(x) for x in row["nums"].split()]
+            pred_nums = [int(x) for x in str(row["nums"]).split()]
             hits = compute_hits(pred_nums, real)
             eval_rows.append({
                 "run_id": row["run_id"],

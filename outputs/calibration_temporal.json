@@ -1,0 +1,37 @@
+{
+  "best_score_mean_pct_avg3": 0.504229775889361,
+  "best_params": {
+    "k_period_typ": 0.04276007019212802,
+    "k_cold": 1.4972013444667198,
+    "k_cold_typ": 0.08493105467784856,
+    "k_typ_temp": 0.8704672557844291
+  },
+  "best_detail": {
+    "n_points": 400.0,
+    "mean_pct_period": 0.5081654586353411,
+    "mean_pct_cold": 0.5058797800549862,
+    "mean_pct_typ": 0.49864408897775553,
+    "mean_pct_avg3": 0.504229775889361
+  },
+  "notes": {
+    "metric": "percentil médio do concurso real vs tickets aleatórios (quanto mais alto, melhor). Em loteria justa tende a ~0.50.",
+    "zscore": "pesos calibrados em z-score por rodada (recomendado)."
+  },
+  "args": {
+    "xlsx": "datalake_megasena.xlsx",
+    "window_recent": 300,
+    "n_eval": 400,
+    "n_rand": 4000,
+    "burn_in": 600,
+    "seed": 123,
+    "recent_years_temporal": 0,
+    "include_special": false,
+    "only_special": false,
+    "trials": 120,
+    "k_period_typ_max": 1.0,
+    "k_cold_max": 1.5,
+    "k_cold_typ_max": 0.6,
+    "k_typ_temp_max": 1.0,
+    "out": "outputs/calibration_temporal.json"
+  }
+}
