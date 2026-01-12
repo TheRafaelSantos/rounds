@@ -1,20 +1,23 @@
 # rounds.py
-# Mega-Sena Lab (acadêmico) - Runner/CLI
-
+# Mega-Sena Lab (acadêmico) - Runner/CLI + (opcional) meta-weights do backtest
 from __future__ import annotations
 
 import argparse
 import csv
 import datetime as dt
+import glob
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from data import load_datalake_xlsx
+from data import load_datalake_xlsx, DEZENAS
 from model import ProfileModel
+
+
+MAX_N = 60
 
 
 def ensure_dir(path: str) -> None:
@@ -23,6 +26,7 @@ def ensure_dir(path: str) -> None:
 
 def parse_nums(text: str, *, pick: int = 6) -> List[int]:
     import re
+
     nums = [int(x) for x in re.findall(r"\d+", text)]
     if len(nums) != pick:
         raise ValueError(f"Esperado {pick} dezenas em --result, veio {len(nums)}: {nums}")
@@ -37,13 +41,30 @@ def normalize_nums(nums: Sequence[int]) -> List[int]:
     return sorted(int(x) for x in nums)
 
 
+def compute_overlap(a: Sequence[int], b: Sequence[int]) -> int:
+    return len(set(a) & set(b))
+
+
 def run_id_from_payload(payload: Dict[str, Any]) -> str:
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:10]
 
 
-def compute_hits(pred: Sequence[int], real: Sequence[int]) -> int:
-    return len(set(pred) & set(real))
+def ensure_nums_column(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if "nums" in df.columns:
+        df["nums"] = df["nums"].apply(lambda x: normalize_nums(x))
+        return df
+
+    cols = [c for c in ["d1", "d2", "d3", "d4", "d5", "d6"] if c in df.columns]
+    if len(cols) != 6:
+        cols = [c for c in DEZENAS if c in df.columns]
+
+    if len(cols) != 6:
+        raise ValueError("Não consegui montar df['nums']: não achei d1..d6 nem DEZENAS completos no Excel.")
+
+    df["nums"] = df[cols].apply(lambda r: sorted(int(x) for x in r.tolist()), axis=1)
+    return df
 
 
 def _safe_union_fieldnames(path: str, new_fields: List[str]) -> List[str]:
@@ -79,17 +100,75 @@ def _rewrite_csv_with_union(path: str, union_fields: List[str]) -> None:
     os.replace(tmp_path, path)
 
 
-def _row_for_csv(run_id: str, ts: str, d: Dict[str, Any]) -> Dict[str, Any]:
+def _find_latest_meta_weights(outdir: str) -> Optional[str]:
+    patt = os.path.join(outdir, "meta_weights_*.json")
+    files = glob.glob(patt)
+    if not files:
+        return None
+    files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return files[0]
+
+
+def _load_meta_weights(path: str) -> Dict[str, float]:
+    with open(path, "r", encoding="utf-8") as f:
+        obj = json.load(f)
+
+    # formato esperado do backtest:
+    # {"run_id": "...", "payload": {...}, "weights": {"bucket": 0.123, ...}}
+    if isinstance(obj, dict) and "weights" in obj and isinstance(obj["weights"], dict):
+        w = obj["weights"]
+    elif isinstance(obj, dict):
+        # fallback: assume que o JSON já é o mapa bucket->peso
+        w = obj
+    else:
+        raise ValueError("meta_weights JSON inválido.")
+
+    out: Dict[str, float] = {}
+    for k, v in w.items():
+        try:
+            out[str(k)] = float(v)
+        except Exception:
+            continue
+
+    if not out:
+        raise ValueError("meta_weights vazio ou não numérico.")
+    return out
+
+
+def _meta_score(bucket: str, bucket_rank: Any, weights: Optional[Dict[str, float]]) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Retorna (meta_weight, meta_score).
+    meta_score simples: weight / rank
+    """
+    if not weights:
+        return None, None
+    w = float(weights.get(bucket, 1.0))
+    try:
+        r = int(bucket_rank)
+        r = max(1, r)
+    except Exception:
+        r = 999
+    return w, (w / float(r))
+
+
+def _row_for_csv(run_id: str, ts: str, d: Dict[str, Any], meta_weights: Optional[Dict[str, float]]) -> Dict[str, Any]:
     nums = d["nums"]
     nums_s = " ".join(f"{n:02d}" for n in nums)
+
+    bucket = str(d.get("bucket"))
+    bucket_rank = d.get("bucket_rank")
+    mw, ms = _meta_score(bucket, bucket_rank, meta_weights)
+
     return {
         "run_id": run_id,
         "ts": ts,
-        "bucket": d.get("bucket"),
-        "bucket_rank": d.get("bucket_rank"),
+        "bucket": bucket,
+        "bucket_rank": bucket_rank,
         "nums": nums_s,
         "typical_raw": d.get("typical_raw"),
         "strategy_score": d.get("strategy_score"),
+        "meta_weight": mw,
+        "meta_score": ms,
         "overlap_last": d.get("overlap_last"),
         "odds": d.get("feat_odds"),
         "primes": d.get("feat_primes"),
@@ -134,10 +213,38 @@ def main() -> int:
     p.add_argument("--target-date", default=None)
     p.add_argument("--temporal-recent-years", type=int, default=0)
 
+    # ---- Fase 3: usar pesos meta aprendidos no backtest ----
+    p.add_argument("--use-meta", action="store_true", help="Aplica meta-weights (aprendidos no backtest) para ranquear palpites.")
+    p.add_argument("--meta-weights", default=None, help="Caminho para outputs/meta_weights_<runid>.json")
+    p.add_argument("--meta-latest", action="store_true", help="Usa o arquivo meta_weights_*.json mais recente em --outdir")
+    p.add_argument("--meta-top-k", type=int, default=6, help="Quantidade de palpites finais recomendados pelo META (greedy).")
+
     args = p.parse_args()
     ensure_dir(args.outdir)
 
+    # ---- meta weights load ----
+    meta_weights: Optional[Dict[str, float]] = None
+    meta_weights_path: Optional[str] = None
+
+    if args.use_meta:
+        if args.meta_weights:
+            meta_weights_path = args.meta_weights
+        elif args.meta_latest:
+            meta_weights_path = _find_latest_meta_weights(args.outdir)
+
+        if meta_weights_path:
+            try:
+                meta_weights = _load_meta_weights(meta_weights_path)
+                print(f"[META] weights carregados: {meta_weights_path} | buckets={len(meta_weights)}")
+            except Exception as e:
+                print(f"[META][AVISO] Falha ao carregar meta_weights ({meta_weights_path}): {e}")
+                meta_weights = None
+        else:
+            print("[META][AVISO] --use-meta ligado, mas não achei --meta-weights nem --meta-latest encontrou arquivo.")
+            meta_weights = None
+
     df = load_datalake_xlsx(args.xlsx).sort_values("concurso").reset_index(drop=True)
+    df = ensure_nums_column(df)
 
     # Aviso se o último do Excel é especial e você não incluiu especiais
     if "indicador_concurso_especial" in df.columns:
@@ -179,6 +286,9 @@ def main() -> int:
         "target_date": args.target_date,
         "temporal_recent_years": int(args.temporal_recent_years),
         "next_is_special": bool(args.next_is_special),
+        "use_meta": bool(args.use_meta),
+        "meta_weights_path": meta_weights_path,
+        "meta_top_k": int(args.meta_top_k),
     }
     rid = run_id_from_payload(payload)
 
@@ -187,6 +297,8 @@ def main() -> int:
     # -------------------------
     # Portfolio base
     # -------------------------
+    already_picks: List[List[int]] = []
+
     if args.portfolio == "mixed12":
         preds = model.suggest_portfolio_mixed12(
             last_nums=last_nums,
@@ -196,9 +308,11 @@ def main() -> int:
             max_overlap_between_picks=args.max_overlap_picks,
         )
         for d in preds:
-            predictions.append(_row_for_csv(rid, payload["ts"], d))
-        already_picks = [d["nums"] for d in preds]
+            predictions.append(_row_for_csv(rid, payload["ts"], d, meta_weights))
+        already_picks = [d["nums"] for d in preds]  # nums em lista[int]
     else:
+        if not hasattr(model, "suggest"):
+            raise RuntimeError("Seu ProfileModel não tem método suggest(). Use --portfolio mixed12.")
         best = model.suggest(
             last_nums=last_nums,
             n_samples=args.n_samples,
@@ -206,7 +320,6 @@ def main() -> int:
             seed=args.seed,
             w_recent=args.w_recent,
         )
-        already_picks = []
         for rank, (score, nums, feats) in enumerate(best, start=1):
             d = {
                 "bucket": "plain",
@@ -232,7 +345,7 @@ def main() -> int:
                 "z_cold": None,
                 "z_tr": None,
             }
-            predictions.append(_row_for_csv(rid, payload["ts"], d))
+            predictions.append(_row_for_csv(rid, payload["ts"], d, meta_weights))
 
     # -------------------------
     # Target date (para temporal/megezord)
@@ -263,7 +376,7 @@ def main() -> int:
                 next_is_special=args.next_is_special,
             )
             for d in plus_rows:
-                predictions.append(_row_for_csv(rid, payload["ts"], d))
+                predictions.append(_row_for_csv(rid, payload["ts"], d, meta_weights))
                 already_picks.append(d["nums"])
 
             tdir = os.path.join(args.outdir, "temporal")
@@ -291,7 +404,7 @@ def main() -> int:
                 next_is_special=args.next_is_special,
             )
             for d in mega_rows:
-                predictions.append(_row_for_csv(rid, payload["ts"], d))
+                predictions.append(_row_for_csv(rid, payload["ts"], d, meta_weights))
                 already_picks.append(d["nums"])
 
             mdir = os.path.join(args.outdir, "megezord")
@@ -300,7 +413,7 @@ def main() -> int:
                 json.dump(mega_prof, f, ensure_ascii=False, indent=2)
 
     # -------------------------
-    # Print
+    # Print portfolio por bucket
     # -------------------------
     print("\n" + "=" * 78)
     title = "PORTFOLIO MIXED-12 (4 estratégias x 3)" if args.portfolio == "mixed12" else f"TOP-{len(predictions)} (plain)"
@@ -308,6 +421,8 @@ def main() -> int:
         title += " + TEMPORAL PLUS-3"
     if args.megezord_plus:
         title += " + MEGEZORD PLUS-3"
+    if args.use_meta and meta_weights:
+        title += " + META-RANK"
     print(title)
     print("=" * 78)
 
@@ -326,17 +441,51 @@ def main() -> int:
             "plain": "PLAIN (top-k típico)",
         }.get(b, b)
 
-    predictions_sorted = sorted(predictions, key=lambda r: (str(r["bucket"]), int(r["bucket_rank"])))
+    predictions_sorted = sorted(predictions, key=lambda r: (str(r["bucket"]), int(r["bucket_rank"] or 999)))
     current_bucket = None
     for row in predictions_sorted:
         if row["bucket"] != current_bucket:
             current_bucket = row["bucket"]
             print("\n" + bucket_title(str(current_bucket)))
             print("-" * 78)
+        meta_part = ""
+        if args.use_meta and meta_weights:
+            meta_part = f" | meta_w={float(row.get('meta_weight') or 0.0):.6f} meta_s={float(row.get('meta_score') or 0.0):.6f}"
         print(
-            f"{int(row['bucket_rank']):>2}) {row['nums']} | sum={row.get('sum')} | odds={row.get('odds')} | primes={row.get('primes')} "
-            f"| overlap_last={row.get('overlap_last')} | strategy={float(row.get('strategy_score') or 0.0):.3f}"
+            f"{int(row['bucket_rank'] or 0):>2}) {row['nums']} | sum={row.get('sum')} | odds={row.get('odds')} | primes={row.get('primes')} "
+            f"| overlap_last={row.get('overlap_last')} | strategy={float(row.get('strategy_score') or 0.0):.3f}{meta_part}"
         )
+
+    # -------------------------
+    # META PICKS (fase 3): top-k por meta_score + restrição de overlap entre os escolhidos
+    # -------------------------
+    if args.use_meta and meta_weights:
+        ranked = sorted(predictions, key=lambda r: float(r.get("meta_score") or 0.0), reverse=True)
+        chosen: List[Dict[str, Any]] = []
+        chosen_nums: List[List[int]] = []
+
+        for row in ranked:
+            if len(chosen) >= int(args.meta_top_k):
+                break
+            nums = [int(x) for x in row["nums"].split()]
+            ok = True
+            for prev in chosen_nums:
+                if compute_overlap(nums, prev) > int(args.max_overlap_picks):
+                    ok = False
+                    break
+            if not ok:
+                continue
+            chosen.append(row)
+            chosen_nums.append(nums)
+
+        print("\n" + "=" * 78)
+        print(f"META PICKS (TOP-{len(chosen)}): selecionados por meta_score (weight/rank) + overlap<= {args.max_overlap_picks}")
+        print("=" * 78)
+        for i, row in enumerate(chosen, start=1):
+            print(
+                f"{i:>2}) {row['nums']} | bucket={row['bucket']}#{row['bucket_rank']} "
+                f"| meta_w={float(row.get('meta_weight') or 0.0):.6f} meta_s={float(row.get('meta_score') or 0.0):.6f}"
+            )
 
     # -------------------------
     # Save meta + consolidated CSV
@@ -371,7 +520,7 @@ def main() -> int:
         eval_rows = []
         for row in predictions:
             pred_nums = [int(x) for x in row["nums"].split()]
-            hits = compute_hits(pred_nums, real)
+            hits = len(set(pred_nums) & set(real))
             eval_rows.append(
                 {
                     "run_id": row["run_id"],
