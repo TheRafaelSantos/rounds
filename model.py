@@ -22,13 +22,26 @@ from features import (
     overlap,
     score_likehood_log,
 )
+
 from analysis_temporal import build_temporal_profile, temporal_score
+from analysis_transition import build_transition_model, transition_score
 
 MAX_N = 60
 P_IN_DRAW = 6 / 60  # 0.1
 
+
 def _bin5(x: int) -> int:
     return int(round(int(x) / 5.0) * 5)
+
+
+def _zscore(arr: np.ndarray) -> np.ndarray:
+    arr = arr.astype(float)
+    m = float(np.mean(arr))
+    s = float(np.std(arr))
+    if not np.isfinite(s) or s <= 1e-12:
+        return np.zeros_like(arr, dtype=float)
+    return (arr - m) / s
+
 
 @dataclass
 class Candidate:
@@ -37,7 +50,13 @@ class Candidate:
     hot_raw: float
     cold_raw: float
     temporal_raw: Optional[float]
+    transition_raw: Optional[float]
     feats: Dict[str, Any]
+    z_typ: Optional[float] = None
+    z_hot: Optional[float] = None
+    z_cold: Optional[float] = None
+    z_tr: Optional[float] = None
+
 
 class ProfileModel:
     def __init__(self, df: pd.DataFrame, *, window_recent: int = 300):
@@ -50,13 +69,22 @@ class ProfileModel:
         self.existing = {tuple(x) for x in self.df["nums"].tolist()}
         self._n = len(self.df)
 
+        # cold/hot base
         self._last_seen_gap = self._compute_gaps()
         self._z_hot = self._compute_hot_z()
 
+        # typical distributions (all vs recent)
         self._dist_all = self._build_feature_dists(self.df)
         df_recent = self.df.iloc[max(0, self._n - self.window_recent):].copy()
         self._dist_recent = self._build_feature_dists(df_recent)
 
+        # transition model (posição p1..p6)
+        tr_recent = min(max(self.window_recent * 2, 200), max(self._n - 1, 0))
+        self._transition_model = build_transition_model(self.df, recent_draws=tr_recent, alpha=0.5)
+
+    # ----------------------------
+    # HOT / COLD
+    # ----------------------------
     def _compute_hot_z(self) -> np.ndarray:
         n_recent = min(self.window_recent, self._n)
         recent = self.df.iloc[self._n - n_recent:].copy()
@@ -81,6 +109,17 @@ class ProfileModel:
         gap = np.where(last_idx < 0, self._n, gap)
         return gap.astype(float)
 
+    def hot_score(self, nums: Sequence[int]) -> float:
+        return float(np.mean([self._z_hot[int(n) - 1] for n in nums]))
+
+    def cold_score(self, nums: Sequence[int]) -> float:
+        exp_gap = 9.0
+        gaps = [self._last_seen_gap[int(n) - 1] for n in nums]
+        return float(np.mean([g / exp_gap for g in gaps]))
+
+    # ----------------------------
+    # FEATURES / TYPICAL
+    # ----------------------------
     def _featurize(self, nums: Sequence[int], last_nums: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         nums = sorted(int(x) for x in nums)
         f: Dict[str, Any] = {}
@@ -144,14 +183,9 @@ class ProfileModel:
 
         return (1 - w) * L_all + w * L_rec
 
-    def hot_score(self, nums: Sequence[int]) -> float:
-        return float(np.mean([self._z_hot[int(n) - 1] for n in nums]))
-
-    def cold_score(self, nums: Sequence[int]) -> float:
-        exp_gap = 9.0
-        gaps = [self._last_seen_gap[int(n) - 1] for n in nums]
-        return float(np.mean([g / exp_gap for g in gaps]))
-
+    # ----------------------------
+    # CANDIDATES
+    # ----------------------------
     def _gen_candidates(
         self,
         *,
@@ -161,6 +195,7 @@ class ProfileModel:
         w_recent: float,
         max_overlap_last: int = 2,
         temporal_p: Optional[np.ndarray] = None,
+        use_transition: bool = False,
     ) -> List[Candidate]:
         rnd = random.Random(int(seed))
         last_nums = sorted(int(x) for x in last_nums)
@@ -182,10 +217,38 @@ class ProfileModel:
             typ = self.typical_score(nums, w_recent=w_recent)
             hot = self.hot_score(nums)
             cold = self.cold_score(nums)
+
             tmp = temporal_score(nums, temporal_p) if temporal_p is not None else None
+            trn = transition_score(nums, last_nums, self._transition_model) if use_transition else None
 
             feats = self._featurize(nums, last_nums=last_nums)
-            out.append(Candidate(nums=nums, typical_raw=typ, hot_raw=hot, cold_raw=cold, temporal_raw=tmp, feats=feats))
+            out.append(
+                Candidate(
+                    nums=nums,
+                    typical_raw=typ,
+                    hot_raw=hot,
+                    cold_raw=cold,
+                    temporal_raw=tmp,
+                    transition_raw=trn,
+                    feats=feats,
+                )
+            )
+
+        # z-scores (para misturar componentes em escala parecida)
+        if out:
+            zt = _zscore(np.array([c.typical_raw for c in out], dtype=float))
+            zh = _zscore(np.array([c.hot_raw for c in out], dtype=float))
+            zc = _zscore(np.array([c.cold_raw for c in out], dtype=float))
+            for i, c in enumerate(out):
+                c.z_typ = float(zt[i])
+                c.z_hot = float(zh[i])
+                c.z_cold = float(zc[i])
+
+            if use_transition:
+                tr_arr = np.array([float(c.transition_raw) for c in out], dtype=float)
+                ztr = _zscore(tr_arr)
+                for i, c in enumerate(out):
+                    c.z_tr = float(ztr[i])
 
         return out
 
@@ -197,7 +260,6 @@ class ProfileModel:
         k: int,
         already: List[List[int]],
         max_overlap_between_picks: int,
-        extra_overlap_limit: Optional[int] = None,
     ) -> List[Candidate]:
         chosen: List[Candidate] = []
         ranked = sorted(candidates, key=objective_fn, reverse=True)
@@ -205,7 +267,6 @@ class ProfileModel:
         for c in ranked:
             if len(chosen) >= k:
                 break
-
             ok = True
             for p in already:
                 if overlap(c.nums, p) > int(max_overlap_between_picks):
@@ -213,28 +274,18 @@ class ProfileModel:
                     break
             if not ok:
                 continue
-
-            if extra_overlap_limit is not None:
-                for p in [x.nums for x in chosen]:
-                    if overlap(c.nums, p) > int(extra_overlap_limit):
-                        ok = False
-                        break
-            if not ok:
-                continue
-
             chosen.append(c)
             already.append(c.nums)
-
         return chosen
 
-    def _to_row(self, c: Candidate, *, bucket: str, rank: int, strategy_score: Optional[float] = None) -> Dict[str, Any]:
+    def _to_row(self, c: Candidate, *, bucket: str, rank: int, strategy_score: float) -> Dict[str, Any]:
         f = c.feats
         return {
             "bucket": bucket,
             "bucket_rank": int(rank),
             "nums": c.nums,
             "typical_raw": float(c.typical_raw),
-            "strategy_score": float(strategy_score if strategy_score is not None else c.typical_raw),
+            "strategy_score": float(strategy_score),
             "overlap_last": int(f.get("overlap_last", 0)),
             "feat_odds": int(f["odds"]),
             "feat_primes": int(f["primes"]),
@@ -247,11 +298,16 @@ class ProfileModel:
             "hot_raw": float(c.hot_raw),
             "cold_raw": float(c.cold_raw),
             "temporal_raw": (float(c.temporal_raw) if c.temporal_raw is not None else None),
-            "z_typ": None,
-            "z_hot": None,
-            "z_cold": None,
+            "transition_raw": (float(c.transition_raw) if c.transition_raw is not None else None),
+            "z_typ": (float(c.z_typ) if c.z_typ is not None else None),
+            "z_hot": (float(c.z_hot) if c.z_hot is not None else None),
+            "z_cold": (float(c.z_cold) if c.z_cold is not None else None),
+            "z_tr": (float(c.z_tr) if c.z_tr is not None else None),
         }
 
+    # ----------------------------
+    # PUBLIC
+    # ----------------------------
     def suggest_portfolio_mixed12(
         self,
         *,
@@ -261,8 +317,6 @@ class ProfileModel:
         w_recent: float = 0.55,
         max_overlap_between_picks: int = 2,
     ) -> List[Dict[str, Any]]:
-        last_nums = sorted(int(x) for x in last_nums)
-
         pool = self._gen_candidates(
             last_nums=last_nums,
             n_samples=n_samples,
@@ -270,22 +324,23 @@ class ProfileModel:
             w_recent=w_recent,
             max_overlap_last=2,
             temporal_p=None,
+            use_transition=False,
         )
 
         already: List[List[int]] = []
         out: List[Dict[str, Any]] = []
 
         chosen = self._pick_best(pool, objective_fn=lambda c: c.typical_raw, k=3, already=already, max_overlap_between_picks=max_overlap_between_picks)
-        out += [self._to_row(c, bucket="typical_top", rank=i+1) for i, c in enumerate(chosen)]
+        out += [self._to_row(c, bucket="typical_top", rank=i + 1, strategy_score=c.typical_raw) for i, c in enumerate(chosen)]
 
-        chosen = self._pick_best(pool, objective_fn=lambda c: c.typical_raw, k=3, already=already, max_overlap_between_picks=max_overlap_between_picks, extra_overlap_limit=1)
-        out += [self._to_row(c, bucket="typical_diverse", rank=i+1) for i, c in enumerate(chosen)]
+        chosen = self._pick_best(pool, objective_fn=lambda c: c.typical_raw, k=3, already=already, max_overlap_between_picks=max_overlap_between_picks)
+        out += [self._to_row(c, bucket="typical_diverse", rank=i + 1, strategy_score=c.typical_raw) for i, c in enumerate(chosen)]
 
         chosen = self._pick_best(pool, objective_fn=lambda c: (0.75 * c.hot_raw + 0.25 * c.typical_raw), k=3, already=already, max_overlap_between_picks=max_overlap_between_picks)
-        out += [self._to_row(c, bucket="hot_recency", rank=i+1, strategy_score=(0.75 * c.hot_raw + 0.25 * c.typical_raw)) for i, c in enumerate(chosen)]
+        out += [self._to_row(c, bucket="hot_recency", rank=i + 1, strategy_score=(0.75 * c.hot_raw + 0.25 * c.typical_raw)) for i, c in enumerate(chosen)]
 
         chosen = self._pick_best(pool, objective_fn=lambda c: (0.75 * c.cold_raw + 0.25 * c.typical_raw), k=3, already=already, max_overlap_between_picks=max_overlap_between_picks)
-        out += [self._to_row(c, bucket="cold_overdue", rank=i+1, strategy_score=(0.75 * c.cold_raw + 0.25 * c.typical_raw)) for i, c in enumerate(chosen)]
+        out += [self._to_row(c, bucket="cold_overdue", rank=i + 1, strategy_score=(0.75 * c.cold_raw + 0.25 * c.typical_raw)) for i, c in enumerate(chosen)]
 
         return out
 
@@ -305,15 +360,52 @@ class ProfileModel:
         prof = build_temporal_profile(self.df, pd.to_datetime(target_date), recent_years=recent_years_for_temporal)
         p_comb = np.array(prof["p_combined"], dtype=float)
 
-        # Se o próximo concurso for especial: mistura com histórico só de especiais (Virada)
-        special_prof = None
-        if next_is_special and ("indicador_concurso_especial" in self.df.columns):
-            df_sp = self.df[self.df["indicador_concurso_especial"].fillna(0).astype(int) == 2].copy()
-            if len(df_sp) >= 10:
-                special_prof = build_temporal_profile(df_sp, pd.to_datetime(target_date), recent_years=recent_years_for_temporal)
-                p_sp = np.array(special_prof["p_combined"], dtype=float)
-                w_gen, w_sp = 0.35, 0.65
-                p_comb = np.exp((w_gen * np.log(np.maximum(p_comb, 1e-12)) + w_sp * np.log(np.maximum(p_sp, 1e-12))) / (w_gen + w_sp))
+        last_nums = sorted(int(x) for x in last_nums)
+        pool = self._gen_candidates(
+            last_nums=last_nums,
+            n_samples=n_samples,
+            seed=seed,
+            w_recent=w_recent,
+            max_overlap_last=2,
+            temporal_p=p_comb,
+            use_transition=False,
+        )
+
+        already = already_picks if already_picks is not None else []
+        out: List[Dict[str, Any]] = []
+
+        pick1 = self._pick_best(pool, objective_fn=lambda c: (1.00 * float(c.temporal_raw or -1e9) + 0.15 * c.typical_raw), k=1, already=already, max_overlap_between_picks=max_overlap_between_picks)
+        if pick1:
+            sc = (1.00 * float(pick1[0].temporal_raw or -1e9) + 0.15 * pick1[0].typical_raw)
+            out.append(self._to_row(pick1[0], bucket="temporal_period", rank=1, strategy_score=sc))
+
+        pick2 = self._pick_best(pool, objective_fn=lambda c: (0.90 * float(c.temporal_raw or -1e9) + 0.60 * c.cold_raw + 0.10 * c.typical_raw), k=1, already=already, max_overlap_between_picks=max_overlap_between_picks)
+        if pick2:
+            sc = (0.90 * float(pick2[0].temporal_raw or -1e9) + 0.60 * pick2[0].cold_raw + 0.10 * pick2[0].typical_raw)
+            out.append(self._to_row(pick2[0], bucket="temporal_cold", rank=1, strategy_score=sc))
+
+        pick3 = self._pick_best(pool, objective_fn=lambda c: (1.00 * c.typical_raw + 0.35 * float(c.temporal_raw or -1e9)), k=1, already=already, max_overlap_between_picks=max_overlap_between_picks)
+        if pick3:
+            sc = (1.00 * pick3[0].typical_raw + 0.35 * float(pick3[0].temporal_raw or -1e9))
+            out.append(self._to_row(pick3[0], bucket="temporal_typical", rank=1, strategy_score=sc))
+
+        return out, prof
+
+    def suggest_megezord_plus3(
+        self,
+        *,
+        last_nums: Sequence[int],
+        target_date: pd.Timestamp,
+        n_samples: int = 250_000,
+        seed: int = 777,
+        w_recent: float = 0.55,
+        max_overlap_between_picks: int = 2,
+        already_picks: Optional[List[List[int]]] = None,
+        recent_years_for_temporal: int = 0,
+        next_is_special: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, object]]:
+        prof = build_temporal_profile(self.df, pd.to_datetime(target_date), recent_years=recent_years_for_temporal)
+        p_comb = np.array(prof["p_combined"], dtype=float)
 
         last_nums = sorted(int(x) for x in last_nums)
         pool = self._gen_candidates(
@@ -323,43 +415,28 @@ class ProfileModel:
             w_recent=w_recent,
             max_overlap_last=2,
             temporal_p=p_comb,
+            use_transition=True,
         )
 
         already = already_picks if already_picks is not None else []
         out: List[Dict[str, Any]] = []
 
-        pick1 = self._pick_best(pool, objective_fn=lambda c: (1.00 * float(c.temporal_raw or -1e9) + 0.15 * c.typical_raw), k=1, already=already, max_overlap_between_picks=max_overlap_between_picks)
+        # 1) temporal + transição (posição)
+        pick1 = self._pick_best(pool, objective_fn=lambda c: (1.00 * float(c.temporal_raw or -1e9) + 0.35 * float(c.z_tr or 0.0)), k=1, already=already, max_overlap_between_picks=max_overlap_between_picks)
         if pick1:
-            out.append(self._to_row(pick1[0], bucket="temporal_period", rank=1,
-                                    strategy_score=(1.00 * float(pick1[0].temporal_raw or -1e9) + 0.15 * pick1[0].typical_raw)))
+            sc = (1.00 * float(pick1[0].temporal_raw or -1e9) + 0.35 * float(pick1[0].z_tr or 0.0))
+            out.append(self._to_row(pick1[0], bucket="megezord_period", rank=1, strategy_score=sc))
 
-        pick2 = self._pick_best(pool, objective_fn=lambda c: (0.90 * float(c.temporal_raw or -1e9) + 0.60 * c.cold_raw + 0.10 * c.typical_raw), k=1, already=already, max_overlap_between_picks=max_overlap_between_picks)
+        # 2) + típico
+        pick2 = self._pick_best(pool, objective_fn=lambda c: (1.00 * float(c.temporal_raw or -1e9) + 0.25 * float(c.z_tr or 0.0) + 0.20 * float(c.z_typ or 0.0)), k=1, already=already, max_overlap_between_picks=max_overlap_between_picks)
         if pick2:
-            out.append(self._to_row(pick2[0], bucket="temporal_cold", rank=1,
-                                    strategy_score=(0.90 * float(pick2[0].temporal_raw or -1e9) + 0.60 * pick2[0].cold_raw + 0.10 * pick2[0].typical_raw)))
+            sc = (1.00 * float(pick2[0].temporal_raw or -1e9) + 0.25 * float(pick2[0].z_tr or 0.0) + 0.20 * float(pick2[0].z_typ or 0.0))
+            out.append(self._to_row(pick2[0], bucket="megezord_typical", rank=1, strategy_score=sc))
 
-        pick3 = self._pick_best(pool, objective_fn=lambda c: (1.00 * c.typical_raw + 0.35 * float(c.temporal_raw or -1e9)), k=1, already=already, max_overlap_between_picks=max_overlap_between_picks)
+        # 3) + cold
+        pick3 = self._pick_best(pool, objective_fn=lambda c: (1.00 * float(c.temporal_raw or -1e9) + 0.25 * float(c.z_tr or 0.0) + 0.20 * float(c.z_cold or 0.0)), k=1, already=already, max_overlap_between_picks=max_overlap_between_picks)
         if pick3:
-            out.append(self._to_row(pick3[0], bucket="temporal_typical", rank=1,
-                                    strategy_score=(1.00 * pick3[0].typical_raw + 0.35 * float(pick3[0].temporal_raw or -1e9))))
-
-        if special_prof is not None:
-            prof["special_profile"] = special_prof
+            sc = (1.00 * float(pick3[0].temporal_raw or -1e9) + 0.25 * float(pick3[0].z_tr or 0.0) + 0.20 * float(pick3[0].z_cold or 0.0))
+            out.append(self._to_row(pick3[0], bucket="megezord_cold", rank=1, strategy_score=sc))
 
         return out, prof
-
-    def suggest(
-        self,
-        *,
-        last_nums: Sequence[int],
-        n_samples: int = 200_000,
-        top_k: int = 12,
-        seed: int = 123,
-        w_recent: float = 0.55,
-    ) -> List[Tuple[float, List[int], Dict[str, Any]]]:
-        pool = self._gen_candidates(last_nums=last_nums, n_samples=n_samples, seed=seed, w_recent=w_recent, max_overlap_last=2, temporal_p=None)
-        ranked = sorted(pool, key=lambda c: c.typical_raw, reverse=True)[: int(top_k)]
-        out = []
-        for c in ranked:
-            out.append((float(c.typical_raw), c.nums, c.feats))
-        return out
