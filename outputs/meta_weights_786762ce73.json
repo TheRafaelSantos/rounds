@@ -1,0 +1,40 @@
+{
+  "run_id": "786762ce73",
+  "payload": {
+    "ts": "2026-01-13T03:38:04",
+    "xlsx": "datalake_megasena.xlsx",
+    "n_eval": 2457,
+    "min_history": 500,
+    "idx_range": [
+      501,
+      2957
+    ],
+    "n_samples": 80000,
+    "seed": 123,
+    "w_recent": 0.55,
+    "window_recent": 300,
+    "max_overlap_picks": 2,
+    "max_overlap_last": 2,
+    "include_special": true,
+    "temporal_plus": true,
+    "megezord_plus": true,
+    "temporal_recent_years": 0,
+    "learn_meta": true,
+    "meta_eta": 0.1,
+    "meta_forget": 0.0,
+    "meta_reward": "hits",
+    "log_every": 10
+  },
+  "weights": {
+    "typical_top": 0.5498333789953515,
+    "typical_diverse": 0.4501654964522758,
+    "hot_recency": 1.1245360651065288e-06,
+    "cold_overdue": 1.0307596235340978e-11,
+    "temporal_period": 9.99999892983848e-13,
+    "temporal_cold": 9.999999999972763e-13,
+    "temporal_typical": 9.99999892983848e-13,
+    "megezord_period": 9.999999999972763e-13,
+    "megezord_typical": 9.99999892983848e-13,
+    "megezord_cold": 9.999999999972763e-13
+  }
+}
