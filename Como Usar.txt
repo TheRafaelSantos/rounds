@@ -1,5 +1,6 @@
 ## Megazord com aprendizado
-  python backtest.py --xlsx datalake_megasena.xlsx --n-eval 400 --min-history 300 --n-samples 150000 --seed 123 --window-recent 300 --w-recent 0.55 --max-overlap-picks 2 --max-overlap-last 2 --include-special --temporal-plus --megezord-plus --learn-meta --meta-eta 0.25 --meta-forget 0.01 --meta-reward hits
+  python backtest.py --xlsx datalake_megasena.xlsx --n-eval 999999 --min-history 500 --n-samples 80000 --seed 123 --window-recent 300 --w-recent 0.55 --max-overlap-picks 2 --max-overlap-last 2 --include-special --temporal-plus --megezord-plus --learn-meta --meta-eta 0.10 --meta-forget 0.0 --meta-reward hits && python rounds.py --xlsx datalake_megasena.xlsx --portfolio mixed12 --n-samples 250000 --seed 123 --w-recent 0.55 --window-recent 300 --max-overlap-picks 2 --include-special --temporal-plus --megezord-plus --use-meta --meta-latest --meta-top-k 6
+
 
 ## Rodar em sequencia
 python backtest.py --xlsx datalake_megasena.xlsx --n-eval 500 --min-history 300 --n-samples 70000 --seed 123 --window-recent 300 --w-recent 0.55 --max-overlap-picks 2 --max-overlap-last 2 --include-special --temporal-plus --megezord-plus --learn-meta --meta-eta 0.25 --meta-forget 0.01 --meta-reward hits \
