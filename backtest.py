@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import random
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -84,6 +85,16 @@ def is_special_row(row: pd.Series) -> bool:
         return int(0 if pd.isna(v) else v) == 2
     except Exception:
         return False
+
+
+def _fmt_hms(seconds: float) -> str:
+    if seconds < 0:
+        seconds = 0.0
+    s = int(round(seconds))
+    h = s // 3600
+    m = (s % 3600) // 60
+    sec = s % 60
+    return f"{h}:{m:02d}:{sec:02d}"
 
 
 def make_random_portfolio(
@@ -236,6 +247,9 @@ def main() -> int:
     ap.add_argument("--megezord-plus", action="store_true")
     ap.add_argument("--temporal-recent-years", type=int, default=0)
 
+    # ---- Logging ----
+    ap.add_argument("--log-every", type=int, default=10, help="Imprime progresso a cada N concursos (0=desliga).")
+
     # ---- Meta learning (fase 2) ----
     ap.add_argument("--learn-meta", action="store_true", help="Ativa meta-aprendizado de pesos por bucket.")
     ap.add_argument("--meta-eta", type=float, default=0.25, help="Taxa de aprendizado do meta (eta).")
@@ -297,6 +311,7 @@ def main() -> int:
         "meta_eta": float(args.meta_eta),
         "meta_forget": float(args.meta_forget),
         "meta_reward": str(args.meta_reward),
+        "log_every": int(args.log_every),
     }
     rid = run_id_from_payload(payload)
 
@@ -323,6 +338,12 @@ def main() -> int:
         meta = HedgeMetaLearner.init(known, eta=args.meta_eta, forget=args.meta_forget)
 
     print(f"Backtest: avaliando {n_eval} concursos | idx {start_idx}..{end_idx} | run_id={rid}")
+
+    # ---- Timers (para bloco/ETA) ----
+    t0 = time.perf_counter()
+    t_block = t0
+    last_j_logged = 0
+    width = max(4, len(str(n_eval)))
 
     for j, idx in enumerate(range(start_idx, end_idx + 1), start=1):
         train = df.iloc[:idx].copy()
@@ -513,10 +534,31 @@ def main() -> int:
         best_model_hits.append(int(max(model_hits_for_this_eval) if model_hits_for_this_eval else 0))
         best_baseline_hits.append(int(max(baseline_hits_for_this_eval) if baseline_hits_for_this_eval else 0))
 
-        if j % 10 == 0 or j == 1 or j == n_eval:
+        # ---- Log (bloco/total/ETA) ----
+        do_log = False
+        if int(args.log_every) > 0:
+            if j == 1 or j == n_eval or (j % int(args.log_every) == 0):
+                do_log = True
+
+        if do_log:
+            t_now = time.perf_counter()
+            block_secs = t_now - t_block
+            delta = j - last_j_logged
+            if delta <= 0:
+                delta = 1
+            sec_per = block_secs / float(delta)
+
+            total_secs = t_now - t0
+            avg_secs = total_secs / float(max(1, j))
+            eta_secs = avg_secs * float(max(0, n_eval - j))
+
             print(
-                f"[{j:>4}/{n_eval}] concurso={eval_concurso} | best_model={best_model_hits[-1]} | best_rand={best_baseline_hits[-1]} | k={k_portfolio}"
+                f"[{j:>{width}}/{n_eval}] concurso={eval_concurso} | best_model={best_model_hits[-1]} | best_rand={best_baseline_hits[-1]} | k={k_portfolio}"
+                f" | bloco={_fmt_hms(block_secs)} ({sec_per:.3f}s/conc) | total={_fmt_hms(total_secs)} | ETA={_fmt_hms(eta_secs)}"
             )
+
+            t_block = t_now
+            last_j_logged = j
 
         # salva perfis de tempos em tempos (leve)
         if (temporal_prof is not None or megezord_prof is not None) and (j % 50 == 0 or j == n_eval):
