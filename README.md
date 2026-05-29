@@ -10,6 +10,7 @@ Fases implementadas:
 
 1. **Fase 1 - Base de dados**.
 2. **Fase 2 - Features basicas**.
+3. **Fase 3 - Historico por dezena**.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -71,6 +72,12 @@ Gerar features basicas:
 python main.py --features
 ```
 
+Gerar historico por dezena:
+
+```powershell
+python main.py --dezenas
+```
+
 ## Saidas geradas
 
 Arquivos locais gerados:
@@ -79,9 +86,12 @@ Arquivos locais gerados:
 data/raw/lotofacil/
 data/processed/lotofacil_concursos.csv
 data/processed/lotofacil_features_base.csv
+data/processed/lotofacil_dezenas_long.csv
+data/processed/lotofacil_dezenas_historico.csv
 data/processed/lotofacil_state.json
 data/exports/lotofacil_historico.xlsx
 data/exports/lotofacil_features_base.xlsx
+data/exports/lotofacil_dezenas_historico.xlsx
 logs/lotofacil_analytics.log
 ```
 
@@ -111,6 +121,24 @@ O comando `python main.py --features` gera uma tabela separada com:
 
 Essas features nao usam concursos futuros. Frequencia historica, atraso e rankings dinamicos ficam para a Fase 3.
 
+## Historico por dezena da Fase 3
+
+O comando `python main.py --dezenas` gera:
+
+1. `dezenas_long`: 15 linhas por concurso, uma para cada dezena sorteada;
+2. `dezenas_historico`: 25 linhas por concurso, uma para cada dezena possivel da Lotofacil.
+
+A tabela `dezenas_historico` calcula, antes de cada concurso:
+
+1. frequencia total ate o concurso anterior;
+2. frequencia nos ultimos 5, 10, 20, 50 e 100 concursos;
+3. atraso atual;
+4. media de atraso historico;
+5. rankings por frequencia total, frequencia recente e atraso;
+6. flags estaticas da dezena, como par, prima, Fibonacci, linha e coluna do volante.
+
+O alvo `saiu_no_concurso` indica se a dezena saiu naquele concurso. As features historicas dessa linha usam apenas concursos anteriores.
+
 ## Testes
 
 ```powershell
@@ -127,8 +155,7 @@ python -m unittest discover -s tests
 
 ## Proximas fases
 
-1. Historico por dezena.
-2. Pares, trios, quartetos e assinaturas.
-3. Backtesting com baseline aleatorio.
-4. Auditoria estatistica.
-5. Geracao final de exatamente 2 jogos de 15 dezenas.
+1. Pares, trios, quartetos e assinaturas.
+2. Backtesting com baseline aleatorio.
+3. Auditoria estatistica.
+4. Geracao final de exatamente 2 jogos de 15 dezenas.

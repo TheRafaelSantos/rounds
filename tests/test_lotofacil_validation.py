@@ -4,6 +4,7 @@ import unittest
 
 import pandas as pd
 
+from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_dezenas_long
 from lotofacil_analytics.features_base import build_base_features
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.validators import DataValidationError, validate_contest_record, validate_dataset
@@ -66,6 +67,37 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertEqual(int(features.loc[1, "qtd_pares"]), 7)
         self.assertEqual(int(features.loc[1, "faixa_01_05"]), 5)
         self.assertEqual(int(features.loc[1, "maior_sequencia_consecutiva"]), 15)
+
+    def test_build_dezenas_history_uses_only_previous_draws(self) -> None:
+        first = normalize_contest(sample_payload(1))
+        second_payload = sample_payload(2)
+        second_payload["listaDezenas"] = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15"]
+        second_payload["dezenasSorteadasOrdemSorteio"] = list(second_payload["listaDezenas"])
+        second = normalize_contest(second_payload)
+        concursos = pd.DataFrame([first, second])
+
+        dezenas_long = build_dezenas_long(concursos)
+        historico = build_dezenas_historico(concursos)
+
+        self.assertEqual(len(dezenas_long), 30)
+        self.assertEqual(len(historico), 50)
+
+        concurso_1_dezena_2 = historico[(historico["concurso"] == 1) & (historico["dezena"] == 2)].iloc[0]
+        self.assertEqual(int(concurso_1_dezena_2["saiu_no_concurso"]), 1)
+        self.assertEqual(int(concurso_1_dezena_2["freq_total_ate_anterior"]), 0)
+        self.assertEqual(int(concurso_1_dezena_2["nunca_saiu_ate_anterior"]), 1)
+
+        concurso_2_dezena_2 = historico[(historico["concurso"] == 2) & (historico["dezena"] == 2)].iloc[0]
+        self.assertEqual(int(concurso_2_dezena_2["saiu_no_concurso"]), 1)
+        self.assertEqual(int(concurso_2_dezena_2["freq_total_ate_anterior"]), 1)
+        self.assertEqual(int(concurso_2_dezena_2["freq_ultimos_5"]), 1)
+        self.assertEqual(int(concurso_2_dezena_2["saiu_concurso_anterior"]), 1)
+        self.assertEqual(int(concurso_2_dezena_2["atraso_atual"]), 0)
+
+        concurso_2_dezena_1 = historico[(historico["concurso"] == 2) & (historico["dezena"] == 1)].iloc[0]
+        self.assertEqual(int(concurso_2_dezena_1["freq_total_ate_anterior"]), 0)
+        self.assertEqual(int(concurso_2_dezena_1["nunca_saiu_ate_anterior"]), 1)
+        self.assertEqual(int(concurso_2_dezena_1["atraso_atual"]), 1)
 
 
 if __name__ == "__main__":

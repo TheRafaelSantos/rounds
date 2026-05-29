@@ -57,3 +57,15 @@ class AppConfig:
     @property
     def features_base_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_features_base.xlsx"
+
+    @property
+    def dezenas_long_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_dezenas_long.csv"
+
+    @property
+    def dezenas_historico_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_dezenas_historico.csv"
+
+    @property
+    def dezenas_historico_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_dezenas_historico.xlsx"

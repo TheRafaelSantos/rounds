@@ -85,3 +85,17 @@ A Fase 2 gera `data/processed/lotofacil_features_base.csv` e `data/exports/lotof
 As features foram mantidas fora do arquivo base `lotofacil_concursos.csv` para preservar a camada de dados normalizados da Fase 1. O comando e:
 
 `python main.py --features`
+
+## Fase 3 implementada
+
+A Fase 3 gera historico por dezena com o comando:
+
+`python main.py --dezenas`
+
+Saidas:
+
+1. `data/processed/lotofacil_dezenas_long.csv`
+2. `data/processed/lotofacil_dezenas_historico.csv`
+3. `data/exports/lotofacil_dezenas_historico.xlsx`
+
+A tabela `dezenas_historico` tem 25 linhas por concurso e calcula frequencia, atraso e rankings apenas com concursos anteriores.
