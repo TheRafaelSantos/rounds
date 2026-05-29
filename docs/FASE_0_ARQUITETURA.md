@@ -196,3 +196,13 @@ Saidas:
 3. `data/exports/lotofacil_prediction_report.md`
 
 A selecao usa o ranking da Fase 8, exige jogos distintos e tenta respeitar diversidade minima por overlap maximo.
+
+## Fase 10 implementada
+
+A Fase 10 adiciona:
+
+1. interface web local com `python main.py --serve`;
+2. comando de build com `python main.py --build-exe`;
+3. preparo de `.gitignore` para `build/`, `dist/` e arquivos `.spec`.
+
+O build usa PyInstaller se ele estiver instalado no ambiente.

@@ -12,6 +12,7 @@ if str(SRC_DIR) not in sys.path:
 
 from lotofacil_analytics.config import AppConfig
 from lotofacil_analytics.auditoria_pipeline import AuditoriaPipeline
+from lotofacil_analytics.build_executable import build_executable
 from lotofacil_analytics.backtest_pipeline import BacktestPipeline
 from lotofacil_analytics.combinacoes_pipeline import CombinacoesPipeline
 from lotofacil_analytics.dezenas_pipeline import DezenasPipeline
@@ -21,6 +22,7 @@ from lotofacil_analytics.ml_pipeline import MLPipeline
 from lotofacil_analytics.optimizer_pipeline import OptimizerPipeline
 from lotofacil_analytics.pipeline import LotofacilPipeline
 from lotofacil_analytics.predictor_pipeline import PredictorPipeline
+from lotofacil_analytics.interface_web import run_web_server
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,6 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--ml", action="store_true", help="Executa ML temporal leve da Fase 7.")
     mode.add_argument("--optimize", action="store_true", help="Gera candidatos otimizados da Fase 8.")
     mode.add_argument("--predict", action="store_true", help="Gera exatamente 2 jogos finais da Fase 9.")
+    mode.add_argument("--serve", action="store_true", help="Inicia interface web local da Fase 10.")
+    mode.add_argument("--build-exe", action="store_true", help="Gera executavel Windows com PyInstaller, se instalado.")
 
     parser.add_argument("--base-dir", default=".", help="Pasta raiz do projeto.")
     parser.add_argument("--timeout", type=float, default=30.0, help="Timeout por requisicao HTTP, em segundos.")
@@ -62,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--generations", type=int, default=20, help="Geracoes do genetico simples.")
     parser.add_argument("--population", type=int, default=80, help="Populacao por geracao do genetico simples.")
     parser.add_argument("--max-overlap-final", type=int, default=10, help="Overlap maximo desejado entre os 2 jogos finais.")
+    parser.add_argument("--host", default="127.0.0.1", help="Host da interface web local.")
+    parser.add_argument("--port", type=int, default=8765, help="Porta da interface web local.")
     return parser
 
 
@@ -81,6 +87,8 @@ def main() -> int:
         or args.ml
         or args.optimize
         or args.predict
+        or args.serve
+        or args.build_exe
     ):
         parser.print_help()
         return 2
@@ -95,7 +103,12 @@ def main() -> int:
     pipeline = LotofacilPipeline(config=config, logger=logger)
 
     try:
-        if args.predict:
+        if args.serve:
+            run_web_server(config=config, logger=logger, host=args.host, port=args.port)
+            return 0
+        if args.build_exe:
+            summary = build_executable(config.base_dir)
+        elif args.predict:
             summary = PredictorPipeline(config=config, logger=logger).predict(
                 seed=args.seed,
                 candidate_pool=args.candidate_pool,

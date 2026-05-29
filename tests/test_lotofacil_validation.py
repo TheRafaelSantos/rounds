@@ -9,6 +9,7 @@ from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
 from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_dezenas_long
 from lotofacil_analytics.features_base import build_base_features
+from lotofacil_analytics.interface_web import _html_page
 from lotofacil_analytics.ml_temporal import run_ml_temporal
 from lotofacil_analytics.optimizer import build_optimized_candidates, score_candidate
 from lotofacil_analytics.predictor import select_final_games
@@ -241,6 +242,12 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertEqual(len(final_games), 2)
         self.assertNotEqual(final_games.loc[0, "nums"], final_games.loc[1, "nums"])
         self.assertLessEqual(int(final_games.loc[1, "overlap_com_jogo_1"]), 10)
+
+    def test_web_interface_html_contains_expected_controls(self) -> None:
+        html = _html_page()
+        self.assertIn("Lotofacil Analytics", html)
+        self.assertIn("/api/status", html)
+        self.assertIn("/api/predict", html)
 
 
 if __name__ == "__main__":

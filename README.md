@@ -17,6 +17,7 @@ Fases implementadas:
 7. **Fase 7 - Machine learning temporal leve**.
 8. **Fase 8 - Otimizacao heuristica de candidatos**.
 9. **Fase 9 - Geracao final de 2 jogos**.
+10. **Fase 10 - Interface local e build de executavel**.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -142,6 +143,18 @@ Gerar exatamente 2 jogos finais:
 
 ```powershell
 python main.py --predict
+```
+
+Abrir interface web local:
+
+```powershell
+python main.py --serve
+```
+
+Gerar executavel Windows, se PyInstaller estiver instalado:
+
+```powershell
+python main.py --build-exe
 ```
 
 ## Saidas geradas
@@ -311,6 +324,29 @@ Regras:
 6. diversidade minima configuravel por `--max-overlap-final`.
 
 A saida de tela e curta. O detalhe tecnico fica em `data/exports/lotofacil_prediction_report.md`.
+
+## Interface e executavel da Fase 10
+
+Interface web local:
+
+```powershell
+python main.py --serve --host 127.0.0.1 --port 8765
+```
+
+Depois abra no navegador:
+
+```text
+http://127.0.0.1:8765
+```
+
+Build de executavel:
+
+```powershell
+python -m pip install pyinstaller
+python main.py --build-exe
+```
+
+O executavel sera gerado em `dist/`. A pasta `dist/` nao entra no Git.
 
 ## Testes
 
