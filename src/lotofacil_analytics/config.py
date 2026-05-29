@@ -121,3 +121,19 @@ class AppConfig:
     @property
     def auditoria_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_auditoria.xlsx"
+
+    @property
+    def ml_dataset_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_ml_dataset.csv"
+
+    @property
+    def ml_predictions_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_ml_predictions.csv"
+
+    @property
+    def ml_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_ml_summary.csv"
+
+    @property
+    def ml_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_ml.xlsx"

@@ -153,3 +153,18 @@ Saidas:
 5. `data/exports/lotofacil_auditoria.xlsx`
 
 A auditoria inclui frequencia por dezena, qui-quadrado aproximado, entropia, anomalias simples e Monte Carlo para repeticao media entre concursos.
+
+## Fase 7 implementada
+
+A Fase 7 executa machine learning temporal leve com o comando:
+
+`python main.py --ml`
+
+Saidas:
+
+1. `data/processed/lotofacil_ml_dataset.csv`
+2. `data/processed/lotofacil_ml_predictions.csv`
+3. `data/processed/lotofacil_ml_summary.csv`
+4. `data/exports/lotofacil_ml.xlsx`
+
+O modelo principal e uma regressao logistica simples implementada com `numpy`, comparada contra baselines de frequencia, atraso e aleatorio. O split e temporal e as features de cada concurso usam apenas concursos anteriores.

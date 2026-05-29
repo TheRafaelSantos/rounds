@@ -17,6 +17,7 @@ from lotofacil_analytics.combinacoes_pipeline import CombinacoesPipeline
 from lotofacil_analytics.dezenas_pipeline import DezenasPipeline
 from lotofacil_analytics.features_pipeline import FeaturePipeline
 from lotofacil_analytics.logger import setup_logger
+from lotofacil_analytics.ml_pipeline import MLPipeline
 from lotofacil_analytics.pipeline import LotofacilPipeline
 
 
@@ -33,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--combinacoes", action="store_true", help="Gera combinacoes e assinaturas da Fase 4.")
     mode.add_argument("--backtest", action="store_true", help="Executa backtest walk-forward da Fase 5.")
     mode.add_argument("--audit", action="store_true", help="Executa auditoria estatistica exploratoria da Fase 6.")
+    mode.add_argument("--ml", action="store_true", help="Executa ML temporal leve da Fase 7.")
 
     parser.add_argument("--base-dir", default=".", help="Pasta raiz do projeto.")
     parser.add_argument("--timeout", type=float, default=30.0, help="Timeout por requisicao HTTP, em segundos.")
@@ -46,6 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--window", type=int, default=100, help="Janela de frequencia recente para metodos simples.")
     parser.add_argument("--candidates", type=int, default=1000, help="Candidatos aleatorios avaliados pelo balanceado_basico.")
     parser.add_argument("--monte-carlo-runs", type=int, default=500, help="Rodadas de Monte Carlo para auditoria.")
+    parser.add_argument("--train-ratio", type=float, default=0.70, help="Proporcao inicial dos concursos usada para treino ML.")
+    parser.add_argument("--validation-ratio", type=float, default=0.15, help="Proporcao apos treino usada para validacao ML.")
+    parser.add_argument("--epochs", type=int, default=400, help="Epocas da regressao logistica simples.")
+    parser.add_argument("--learning-rate", type=float, default=0.05, help="Taxa de aprendizado da regressao logistica simples.")
+    parser.add_argument("--l2", type=float, default=0.001, help="Regularizacao L2 da regressao logistica simples.")
     return parser
 
 
@@ -53,7 +60,7 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    if not (args.update or args.full or args.status or args.features or args.dezenas or args.combinacoes or args.backtest or args.audit):
+    if not (args.update or args.full or args.status or args.features or args.dezenas or args.combinacoes or args.backtest or args.audit or args.ml):
         parser.print_help()
         return 2
 
@@ -67,7 +74,16 @@ def main() -> int:
     pipeline = LotofacilPipeline(config=config, logger=logger)
 
     try:
-        if args.audit:
+        if args.ml:
+            summary = MLPipeline(config=config, logger=logger).run(
+                train_ratio=args.train_ratio,
+                validation_ratio=args.validation_ratio,
+                epochs=args.epochs,
+                learning_rate=args.learning_rate,
+                l2=args.l2,
+                seed=args.seed,
+            )
+        elif args.audit:
             summary = AuditoriaPipeline(config=config, logger=logger).run(
                 monte_carlo_runs=args.monte_carlo_runs,
                 seed=args.seed,

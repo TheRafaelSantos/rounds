@@ -14,6 +14,7 @@ Fases implementadas:
 4. **Fase 4 - Combinacoes e assinaturas**.
 5. **Fase 5 - Backtesting inicial**.
 6. **Fase 6 - Auditoria estatistica exploratoria**.
+7. **Fase 7 - Machine learning temporal leve**.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -111,6 +112,18 @@ Rodar auditoria com mais simulacoes Monte Carlo:
 python main.py --audit --monte-carlo-runs 2000 --seed 123
 ```
 
+Rodar ML temporal:
+
+```powershell
+python main.py --ml
+```
+
+Rodar ML com parametros:
+
+```powershell
+python main.py --ml --train-ratio 0.70 --validation-ratio 0.15 --epochs 400 --learning-rate 0.05 --l2 0.001 --seed 123
+```
+
 ## Saidas geradas
 
 Arquivos locais gerados:
@@ -131,6 +144,9 @@ data/processed/lotofacil_auditoria_resumo.csv
 data/processed/lotofacil_auditoria_dezenas.csv
 data/processed/lotofacil_auditoria_anomalias.csv
 data/processed/lotofacil_auditoria_monte_carlo.csv
+data/processed/lotofacil_ml_dataset.csv
+data/processed/lotofacil_ml_predictions.csv
+data/processed/lotofacil_ml_summary.csv
 data/processed/lotofacil_state.json
 data/exports/lotofacil_historico.xlsx
 data/exports/lotofacil_features_base.xlsx
@@ -138,6 +154,7 @@ data/exports/lotofacil_dezenas_historico.xlsx
 data/exports/lotofacil_combinacoes.xlsx
 data/exports/lotofacil_backtest.xlsx
 data/exports/lotofacil_auditoria.xlsx
+data/exports/lotofacil_ml.xlsx
 logs/lotofacil_analytics.log
 ```
 
@@ -226,6 +243,18 @@ O comando `python main.py --audit` gera uma auditoria exploratoria com:
 O p-value do qui-quadrado usa aproximacao Wilson-Hilferty para evitar dependencia pesada nesta fase. A comparacao de repeticao usa p-value empirico por simulacao.
 
 Auditoria nao e previsao. Ela serve para verificar se o historico parece compativel com aleatoriedade e para apontar casos extremos para estudo.
+
+## Machine learning da Fase 7
+
+O comando `python main.py --ml` cria um dataset temporal com uma linha por concurso e por dezena, treina uma regressao logistica simples implementada com `numpy` e compara contra:
+
+1. `baseline_freq_100`;
+2. `baseline_atraso`;
+3. `baseline_random`.
+
+O split e temporal. O modelo treina nos concursos iniciais, valida no bloco seguinte e testa no bloco final. As features de cada linha usam apenas concursos anteriores ao concurso avaliado.
+
+Esta fase nao usa `scikit-learn` para manter instalacao leve. O objetivo e criar uma referencia auditavel, nao maximizar complexidade.
 
 ## Testes
 

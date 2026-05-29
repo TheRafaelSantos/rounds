@@ -9,6 +9,7 @@ from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
 from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_dezenas_long
 from lotofacil_analytics.features_base import build_base_features
+from lotofacil_analytics.ml_temporal import run_ml_temporal
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.validators import DataValidationError, validate_contest_record, validate_dataset
 
@@ -177,6 +178,29 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("entropia_ratio", set(resumo["metrica"]))
         self.assertTrue((dezenas["freq_observada"] >= 0).all())
         self.assertIsNotNone(anomalias)
+
+    def test_run_ml_temporal_outputs_predictions(self) -> None:
+        rows = []
+        for idx in range(1, 8):
+            start = idx
+            dezenas = [f"{n:02d}" for n in range(start, start + 15)]
+            rows.append(normalize_contest(payload_with_dezenas(idx, dezenas)))
+
+        dataset, predictions, summary = run_ml_temporal(
+            pd.DataFrame(rows),
+            train_ratio=0.50,
+            validation_ratio=0.25,
+            epochs=5,
+            learning_rate=0.01,
+            l2=0.001,
+            seed=123,
+        )
+
+        self.assertEqual(len(dataset), 175)
+        self.assertFalse(predictions.empty)
+        self.assertFalse(summary.empty)
+        self.assertIn("ml_logistico_simples", set(predictions["modelo_nome"]))
+        self.assertTrue((predictions["qtd_acertos"] >= 0).all())
 
 
 if __name__ == "__main__":
