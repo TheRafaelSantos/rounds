@@ -69,3 +69,23 @@ class AppConfig:
     @property
     def dezenas_historico_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_dezenas_historico.xlsx"
+
+    @property
+    def combinacoes_features_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_combinacoes_features.csv"
+
+    @property
+    def combinacoes_pares_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_combinacoes_pares.csv"
+
+    @property
+    def combinacoes_trios_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_combinacoes_trios.csv"
+
+    @property
+    def combinacoes_quartetos_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_combinacoes_quartetos.csv"
+
+    @property
+    def combinacoes_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_combinacoes.xlsx"

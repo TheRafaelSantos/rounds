@@ -11,6 +11,7 @@ Fases implementadas:
 1. **Fase 1 - Base de dados**.
 2. **Fase 2 - Features basicas**.
 3. **Fase 3 - Historico por dezena**.
+4. **Fase 4 - Combinacoes e assinaturas**.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -78,6 +79,12 @@ Gerar historico por dezena:
 python main.py --dezenas
 ```
 
+Gerar combinacoes e assinaturas:
+
+```powershell
+python main.py --combinacoes
+```
+
 ## Saidas geradas
 
 Arquivos locais gerados:
@@ -88,10 +95,15 @@ data/processed/lotofacil_concursos.csv
 data/processed/lotofacil_features_base.csv
 data/processed/lotofacil_dezenas_long.csv
 data/processed/lotofacil_dezenas_historico.csv
+data/processed/lotofacil_combinacoes_features.csv
+data/processed/lotofacil_combinacoes_pares.csv
+data/processed/lotofacil_combinacoes_trios.csv
+data/processed/lotofacil_combinacoes_quartetos.csv
 data/processed/lotofacil_state.json
 data/exports/lotofacil_historico.xlsx
 data/exports/lotofacil_features_base.xlsx
 data/exports/lotofacil_dezenas_historico.xlsx
+data/exports/lotofacil_combinacoes.xlsx
 logs/lotofacil_analytics.log
 ```
 
@@ -139,6 +151,18 @@ A tabela `dezenas_historico` calcula, antes de cada concurso:
 
 O alvo `saiu_no_concurso` indica se a dezena saiu naquele concurso. As features historicas dessa linha usam apenas concursos anteriores.
 
+## Combinacoes e assinaturas da Fase 4
+
+O comando `python main.py --combinacoes` gera:
+
+1. features combinatorias por concurso;
+2. ranking historico de todos os pares possiveis;
+3. ranking historico de todos os trios possiveis;
+4. ranking historico de todos os quartetos possiveis;
+5. assinaturas de paridade, faixas, linhas, colunas, gaps, modulo 3, modulo 5 e repeticao anterior.
+
+Na tabela por concurso, as frequencias de pares, trios e quartetos sao calculadas somente contra concursos anteriores. Os rankings agregados usam todo o historico e servem para auditoria exploratoria, nao para previsao direta.
+
 ## Testes
 
 ```powershell
@@ -155,7 +179,6 @@ python -m unittest discover -s tests
 
 ## Proximas fases
 
-1. Pares, trios, quartetos e assinaturas.
-2. Backtesting com baseline aleatorio.
-3. Auditoria estatistica.
-4. Geracao final de exatamente 2 jogos de 15 dezenas.
+1. Backtesting com baseline aleatorio.
+2. Auditoria estatistica.
+3. Geracao final de exatamente 2 jogos de 15 dezenas.

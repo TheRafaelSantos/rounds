@@ -99,3 +99,19 @@ Saidas:
 3. `data/exports/lotofacil_dezenas_historico.xlsx`
 
 A tabela `dezenas_historico` tem 25 linhas por concurso e calcula frequencia, atraso e rankings apenas com concursos anteriores.
+
+## Fase 4 implementada
+
+A Fase 4 gera combinacoes e assinaturas com o comando:
+
+`python main.py --combinacoes`
+
+Saidas:
+
+1. `data/processed/lotofacil_combinacoes_features.csv`
+2. `data/processed/lotofacil_combinacoes_pares.csv`
+3. `data/processed/lotofacil_combinacoes_trios.csv`
+4. `data/processed/lotofacil_combinacoes_quartetos.csv`
+5. `data/exports/lotofacil_combinacoes.xlsx`
+
+A tabela de features por concurso calcula frequencias contra o historico anterior. Os agregados de pares, trios e quartetos usam todo o historico e devem ser lidos como auditoria exploratoria.

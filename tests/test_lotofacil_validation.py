@@ -4,6 +4,7 @@ import unittest
 
 import pandas as pd
 
+from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
 from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_dezenas_long
 from lotofacil_analytics.features_base import build_base_features
 from lotofacil_analytics.normalize import normalize_contest
@@ -98,6 +99,40 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertEqual(int(concurso_2_dezena_1["freq_total_ate_anterior"]), 0)
         self.assertEqual(int(concurso_2_dezena_1["nunca_saiu_ate_anterior"]), 1)
         self.assertEqual(int(concurso_2_dezena_1["atraso_atual"]), 1)
+
+    def test_build_combinacoes_features_uses_previous_draws(self) -> None:
+        first = normalize_contest(sample_payload(1))
+        second_payload = sample_payload(2)
+        second_payload["listaDezenas"] = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15"]
+        second_payload["dezenasSorteadasOrdemSorteio"] = list(second_payload["listaDezenas"])
+        second = normalize_contest(second_payload)
+        concursos = pd.DataFrame([first, second])
+
+        features = build_combinacoes_features(concursos)
+
+        self.assertEqual(int(features.loc[0, "qtd_pares_combinatorios"]), 105)
+        self.assertEqual(int(features.loc[0, "qtd_pares_ineditos_ate_entao"]), 105)
+        self.assertEqual(int(features.loc[0, "maior_freq_par_ate_anterior"]), 0)
+        self.assertEqual(int(features.loc[1, "qtd_pares_ineditos_ate_entao"]), 69)
+        self.assertEqual(int(features.loc[1, "qtd_trios_ineditos_ate_entao"]), 371)
+        self.assertEqual(int(features.loc[1, "qtd_quartetos_ineditos_ate_entao"]), 1239)
+
+    def test_build_combinacoes_aggregates_all_possible_combos(self) -> None:
+        first = normalize_contest(sample_payload(1))
+        second_payload = sample_payload(2)
+        second_payload["listaDezenas"] = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15"]
+        second_payload["dezenasSorteadasOrdemSorteio"] = list(second_payload["listaDezenas"])
+        second = normalize_contest(second_payload)
+
+        _, pares, trios, quartetos = build_combinacoes_outputs(pd.DataFrame([first, second]))
+
+        self.assertEqual(len(pares), 300)
+        self.assertEqual(len(trios), 2300)
+        self.assertEqual(len(quartetos), 12650)
+        pair_02_03 = pares[pares["combo"] == "02-03"].iloc[0]
+        pair_01_02 = pares[pares["combo"] == "01-02"].iloc[0]
+        self.assertEqual(int(pair_02_03["freq_total_historico"]), 2)
+        self.assertEqual(int(pair_01_02["freq_total_historico"]), 1)
 
 
 if __name__ == "__main__":
