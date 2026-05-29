@@ -12,6 +12,7 @@ Fases implementadas:
 2. **Fase 2 - Features basicas**.
 3. **Fase 3 - Historico por dezena**.
 4. **Fase 4 - Combinacoes e assinaturas**.
+5. **Fase 5 - Backtesting inicial**.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -85,6 +86,18 @@ Gerar combinacoes e assinaturas:
 python main.py --combinacoes
 ```
 
+Rodar backtest inicial:
+
+```powershell
+python main.py --backtest
+```
+
+Rodar backtest com parametros:
+
+```powershell
+python main.py --backtest --n-eval 500 --min-history 300 --seed 123 --window 100 --candidates 2000
+```
+
 ## Saidas geradas
 
 Arquivos locais gerados:
@@ -99,11 +112,14 @@ data/processed/lotofacil_combinacoes_features.csv
 data/processed/lotofacil_combinacoes_pares.csv
 data/processed/lotofacil_combinacoes_trios.csv
 data/processed/lotofacil_combinacoes_quartetos.csv
+data/processed/lotofacil_backtest.csv
+data/processed/lotofacil_backtest_summary.csv
 data/processed/lotofacil_state.json
 data/exports/lotofacil_historico.xlsx
 data/exports/lotofacil_features_base.xlsx
 data/exports/lotofacil_dezenas_historico.xlsx
 data/exports/lotofacil_combinacoes.xlsx
+data/exports/lotofacil_backtest.xlsx
 logs/lotofacil_analytics.log
 ```
 
@@ -163,6 +179,22 @@ O comando `python main.py --combinacoes` gera:
 
 Na tabela por concurso, as frequencias de pares, trios e quartetos sao calculadas somente contra concursos anteriores. Os rankings agregados usam todo o historico e servem para auditoria exploratoria, nao para previsao direta.
 
+## Backtesting da Fase 5
+
+O comando `python main.py --backtest` executa backtest walk-forward nos concursos finais da base.
+
+Metodos iniciais:
+
+1. `aleatorio_puro`;
+2. `frequencia_quente`;
+3. `frequencia_fria`;
+4. `hibrido_quente_frio`;
+5. `balanceado_basico`.
+
+O treino de cada linha usa somente concursos anteriores ao concurso avaliado. O resultado mede acertos de 11, 12, 13, 14 e 15 dezenas, alem da media de acertos por metodo.
+
+Esses metodos sao baselines e heuristicas simples. Resultado melhor em uma janela nao prova previsao real; serve para comparar contra o acaso e detectar overfitting nas fases futuras.
+
 ## Testes
 
 ```powershell
@@ -179,6 +211,5 @@ python -m unittest discover -s tests
 
 ## Proximas fases
 
-1. Backtesting com baseline aleatorio.
-2. Auditoria estatistica.
-3. Geracao final de exatamente 2 jogos de 15 dezenas.
+1. Auditoria estatistica.
+2. Geracao final de exatamente 2 jogos de 15 dezenas.

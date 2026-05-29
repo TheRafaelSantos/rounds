@@ -89,3 +89,15 @@ class AppConfig:
     @property
     def combinacoes_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_combinacoes.xlsx"
+
+    @property
+    def backtest_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_backtest.csv"
+
+    @property
+    def backtest_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_backtest_summary.csv"
+
+    @property
+    def backtest_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_backtest.xlsx"

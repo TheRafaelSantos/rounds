@@ -4,6 +4,7 @@ import unittest
 
 import pandas as pd
 
+from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
 from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_dezenas_long
 from lotofacil_analytics.features_base import build_base_features
@@ -31,6 +32,13 @@ def sample_payload(numero: int = 1) -> dict:
             {"faixa": 5, "numeroDeGanhadores": 257593, "valorPremio": 2.0},
         ],
     }
+
+
+def payload_with_dezenas(numero: int, dezenas: list[str]) -> dict:
+    payload = sample_payload(numero)
+    payload["listaDezenas"] = list(dezenas)
+    payload["dezenasSorteadasOrdemSorteio"] = list(dezenas)
+    return payload
 
 
 class LotofacilValidationTest(unittest.TestCase):
@@ -133,6 +141,25 @@ class LotofacilValidationTest(unittest.TestCase):
         pair_01_02 = pares[pares["combo"] == "01-02"].iloc[0]
         self.assertEqual(int(pair_02_03["freq_total_historico"]), 2)
         self.assertEqual(int(pair_01_02["freq_total_historico"]), 1)
+
+    def test_compute_hits(self) -> None:
+        self.assertEqual(compute_hits([1, 2, 3], [3, 4, 5]), 1)
+        self.assertEqual(compute_hits([1, 2, 3], [4, 5, 6]), 0)
+
+    def test_run_backtest_returns_all_methods(self) -> None:
+        rows = [
+            normalize_contest(payload_with_dezenas(1, ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15"])),
+            normalize_contest(payload_with_dezenas(2, ["02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16"])),
+            normalize_contest(payload_with_dezenas(3, ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16", "17"])),
+            normalize_contest(payload_with_dezenas(4, ["04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18"])),
+        ]
+        results, summary = run_backtest(pd.DataFrame(rows), n_eval=2, min_history=2, seed=123, window=2, candidates=100)
+
+        self.assertEqual(int(results["concurso_previsto"].nunique()), 2)
+        self.assertEqual(len(results), 10)
+        self.assertEqual(set(results["modelo_nome"]), {"aleatorio_puro", "frequencia_quente", "frequencia_fria", "hibrido_quente_frio", "balanceado_basico"})
+        self.assertEqual(set(summary["modelo_nome"]), set(results["modelo_nome"]))
+        self.assertTrue((results["qtd_acertos"] >= 0).all())
 
 
 if __name__ == "__main__":

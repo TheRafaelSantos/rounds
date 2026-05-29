@@ -115,3 +115,25 @@ Saidas:
 5. `data/exports/lotofacil_combinacoes.xlsx`
 
 A tabela de features por concurso calcula frequencias contra o historico anterior. Os agregados de pares, trios e quartetos usam todo o historico e devem ser lidos como auditoria exploratoria.
+
+## Fase 5 implementada
+
+A Fase 5 executa backtest walk-forward com o comando:
+
+`python main.py --backtest`
+
+Saidas:
+
+1. `data/processed/lotofacil_backtest.csv`
+2. `data/processed/lotofacil_backtest_summary.csv`
+3. `data/exports/lotofacil_backtest.xlsx`
+
+Metodos iniciais:
+
+1. `aleatorio_puro`
+2. `frequencia_quente`
+3. `frequencia_fria`
+4. `hibrido_quente_frio`
+5. `balanceado_basico`
+
+Cada previsao do backtest usa apenas concursos anteriores ao concurso avaliado.
