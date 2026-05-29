@@ -40,8 +40,8 @@ class PredictionSummary:
                 f"Lua no horario de Brasilia: {self.fase_lua} ({self.iluminacao_lua_percentual:.2f}% iluminada)",
                 f"Numerologia da data: raiz {self.numerologia_data_raiz}",
                 "Metodo: ensemble_score_v1",
-                f"Jogo 1: {self.jogo_1}",
-                f"Jogo 2: {self.jogo_2}",
+                f"Jogo 1 principal: {self.jogo_1}",
+                f"Jogo 2 alternativo completo: {self.jogo_2}",
                 f"Aviso: {AVISO_TECNICO}",
                 f"Relatorio tecnico: {self.report_path}",
             ]
