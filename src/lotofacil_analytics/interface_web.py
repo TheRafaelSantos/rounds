@@ -37,6 +37,7 @@ def _html_page() -> str:
   <button onclick="status()">Status</button>
   <button onclick="updateBase()">Atualizar base</button>
   <button onclick="predict()">Gerar 2 jogos</button>
+  <button onclick="window.location='/report'">Baixar relatorio</button>
   <section class="games" id="games"></section>
   <pre id="output">Pronto.</pre>
   <script>
@@ -90,6 +91,19 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 return
             if self.path == "/api/status":
                 self._handle_json(lambda: LotofacilPipeline(config=config, logger=logger).status().__dict__)
+                return
+            if self.path == "/report":
+                report_path = config.prediction_report_path
+                if not report_path.exists():
+                    _json_response(self, HTTPStatus.NOT_FOUND, {"error": "relatorio ainda nao gerado; use Gerar 2 jogos primeiro"})
+                    return
+                body = report_path.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="lotofacil_prediction_report.md"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
                 return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})
 

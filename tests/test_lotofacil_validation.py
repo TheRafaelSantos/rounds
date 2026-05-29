@@ -9,6 +9,7 @@ from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
 from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_dezenas_long
 from lotofacil_analytics.features_base import build_base_features
+from lotofacil_analytics.games import generate_games
 from lotofacil_analytics.interface_web import _html_page
 from lotofacil_analytics.ml_temporal import run_ml_temporal
 from lotofacil_analytics.optimizer import build_optimized_candidates, score_candidate
@@ -248,6 +249,33 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("Lotofacil Analytics", html)
         self.assertIn("/api/status", html)
         self.assertIn("/api/predict", html)
+        self.assertIn("/report", html)
+
+    def test_generate_games_balanceado_returns_requested_quantity(self) -> None:
+        rows = []
+        for idx in range(1, 8):
+            start = idx
+            dezenas = [f"{n:02d}" for n in range(start, start + 15)]
+            rows.append(normalize_contest(payload_with_dezenas(idx, dezenas)))
+
+        games = generate_games(
+            pd.DataFrame(rows),
+            method="balanceado_basico",
+            qty=3,
+            seed=123,
+            window=2,
+            candidates=100,
+            candidate_pool=200,
+            generations=2,
+            population=10,
+        )
+
+        self.assertEqual(len(games), 3)
+        for nums_text in games["nums"].tolist():
+            nums = [int(part) for part in nums_text.split()]
+            self.assertEqual(len(nums), 15)
+            self.assertEqual(len(set(nums)), 15)
+            self.assertTrue(all(1 <= n <= 25 for n in nums))
 
 
 if __name__ == "__main__":

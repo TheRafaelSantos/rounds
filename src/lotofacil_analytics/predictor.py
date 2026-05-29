@@ -7,6 +7,7 @@ from typing import Dict, List, Sequence, Tuple
 
 import pandas as pd
 
+from .context_features import TargetContext, build_target_context
 from .optimizer import build_optimized_candidates
 
 
@@ -17,6 +18,11 @@ AVISO_TECNICO = "Sugestoes matematicas/estatisticas; nao existe garantia de acer
 class PredictionSummary:
     concurso_alvo: int
     generated_at: str
+    data_proximo_concurso: str
+    dia_semana: str
+    fase_lua: str
+    iluminacao_lua_percentual: float
+    numerologia_data_raiz: int
     jogo_1: str
     jogo_2: str
     prediction_csv_path: str
@@ -29,6 +35,10 @@ class PredictionSummary:
                 "",
                 f"Concurso-alvo: {self.concurso_alvo}",
                 f"Gerado em: {self.generated_at}",
+                f"Data do proximo concurso: {self.data_proximo_concurso}",
+                f"Dia da semana: {self.dia_semana}",
+                f"Lua no horario de Brasilia: {self.fase_lua} ({self.iluminacao_lua_percentual:.2f}% iluminada)",
+                f"Numerologia da data: raiz {self.numerologia_data_raiz}",
                 "Metodo: ensemble_score_v1",
                 f"Jogo 1: {self.jogo_1}",
                 f"Jogo 2: {self.jogo_2}",
@@ -87,6 +97,7 @@ def build_prediction_report(
     last_concurso: int,
     last_date: str,
     max_overlap: int,
+    target_context: TargetContext,
 ) -> str:
     lines = [
         "# Relatorio tecnico - Lotofacil Analytics",
@@ -97,13 +108,28 @@ def build_prediction_report(
         "Metodo: ensemble_score_v1",
         f"Diversidade maxima configurada entre jogos: overlap <= {max_overlap}",
         "",
+        "## Contexto do proximo concurso",
+        "",
+        f"- Data do proximo concurso: {target_context.data_proximo_concurso}",
+        f"- Horario de Brasilia usado no calculo lunar: {target_context.horario_brasilia_assumido}",
+        f"- Dia da semana: {target_context.dia_semana_nome}",
+        f"- Periodo do ano: {target_context.estacao_do_ano}; trimestre {target_context.trimestre}; semestre {target_context.semestre}",
+        f"- Lua: {target_context.fase_lua}; idade {target_context.idade_lua:.2f} dias; iluminacao {target_context.iluminacao_lua_percentual:.2f}%",
+        f"- Numerologia: raiz da data {target_context.numerologia_data_raiz}; raiz do concurso {target_context.numerologia_concurso_raiz}; raiz dia+mes {target_context.numerologia_dia_mes_raiz}",
+        f"- Observacao: {target_context.observacao_horario}",
+        "",
         "Aviso: sugestoes matematicas/estatisticas; nao existe garantia de acerto em sorteios aleatorios.",
         "",
         "## Jogos finais",
         "",
     ]
     for _, row in final_games.iterrows():
-        lines.append(f"- Jogo {int(row['jogo'])}: {row['nums']} | score_final={float(row['score_final']):.6f} | metodo_origem={row.get('metodo', '-')}")
+        lines.append(
+            f"- Jogo {int(row['jogo'])}: {row['nums']} | "
+            f"score_final={float(row['score_final']):.6f} | "
+            f"score_contextual={float(row.get('score_contextual', 0)):.6f} | "
+            f"metodo_origem={row.get('metodo', '-')}"
+        )
     lines.extend(
         [
             "",
@@ -113,7 +139,10 @@ def build_prediction_report(
             "2. score historico recente;",
             "3. score anti-popularidade humana;",
             "4. score combinatorio;",
-            "5. diversidade minima entre os dois jogos.",
+            "5. score contextual: data do proximo concurso, dia da semana, periodo do ano, fase da lua e numerologia exploratoria;",
+            "6. diversidade minima entre os dois jogos.",
+            "",
+            "Os dois jogos sao combinacoes completas de 15 dezenas. O sistema nao divide um palpite em metades entre sugestoes.",
             "",
             "## Limite tecnico",
             "",
@@ -133,6 +162,8 @@ def build_final_prediction(
     generations: int,
     population: int,
     max_overlap: int,
+    draw_hour: int,
+    draw_minute: int,
     prediction_csv_path: Path,
     report_path: Path,
     excel_path: Path,
@@ -145,8 +176,10 @@ def build_final_prediction(
     last_concurso = int(last["concurso"])
     last_date = str(last["data_sorteio"])
     concurso_alvo = last_concurso + 1
+    target_context = build_target_context(df, draw_hour=draw_hour, draw_minute=draw_minute)
 
-    if existing_candidates is not None and not existing_candidates.empty:
+    required_context_cols = {"score_contextual", "contexto_data_proximo_concurso", "contexto_fase_lua"}
+    if existing_candidates is not None and not existing_candidates.empty and required_context_cols.issubset(existing_candidates.columns):
         candidates = existing_candidates.copy()
     else:
         candidates, _summary = build_optimized_candidates(
@@ -156,12 +189,20 @@ def build_final_prediction(
             top_games=max(top_games, 50),
             generations=generations,
             population=population,
+            draw_hour=draw_hour,
+            draw_minute=draw_minute,
         )
 
     final_games = select_final_games(candidates, max_overlap=max_overlap)
     generated_at = datetime.now().isoformat(timespec="seconds")
     final_games.insert(0, "generated_at", generated_at)
     final_games.insert(1, "concurso_alvo", concurso_alvo)
+    final_games.insert(2, "data_proximo_concurso", target_context.data_proximo_concurso)
+    final_games.insert(3, "horario_brasilia_assumido", target_context.horario_brasilia_assumido)
+    final_games.insert(4, "dia_semana_proximo_concurso", target_context.dia_semana_nome)
+    final_games.insert(5, "fase_lua_proximo_concurso", target_context.fase_lua)
+    final_games.insert(6, "iluminacao_lua_percentual", target_context.iluminacao_lua_percentual)
+    final_games.insert(7, "numerologia_data_raiz", target_context.numerologia_data_raiz)
     final_games["aviso"] = AVISO_TECNICO
 
     prediction_csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -177,6 +218,7 @@ def build_final_prediction(
             last_concurso=last_concurso,
             last_date=last_date,
             max_overlap=max_overlap,
+            target_context=target_context,
         ),
         encoding="utf-8",
     )
@@ -184,6 +226,11 @@ def build_final_prediction(
     return PredictionSummary(
         concurso_alvo=concurso_alvo,
         generated_at=generated_at,
+        data_proximo_concurso=target_context.data_proximo_concurso,
+        dia_semana=target_context.dia_semana_nome,
+        fase_lua=target_context.fase_lua,
+        iluminacao_lua_percentual=target_context.iluminacao_lua_percentual,
+        numerologia_data_raiz=target_context.numerologia_data_raiz,
         jogo_1=str(final_games.loc[0, "nums"]),
         jogo_2=str(final_games.loc[1, "nums"]),
         prediction_csv_path=str(prediction_csv_path),

@@ -161,3 +161,15 @@ class AppConfig:
     @property
     def prediction_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_prediction.xlsx"
+
+    @property
+    def generated_games_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_jogos_gerados.csv"
+
+    @property
+    def generated_games_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_jogos_gerados.xlsx"
+
+    @property
+    def full_export_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_analytics_completo.xlsx"

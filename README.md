@@ -139,10 +139,28 @@ Gerar candidatos com parametros:
 python main.py --optimize --candidate-pool 20000 --top-games 100 --generations 30 --population 100 --seed 123
 ```
 
+Gerar jogos por metodo especifico:
+
+```powershell
+python main.py --generate-games --method balanceado_basico --qty 10
+```
+
 Gerar exatamente 2 jogos finais:
 
 ```powershell
 python main.py --predict
+```
+
+Gerar os 2 jogos finais em modo completo, recalculando as fases antes da selecao:
+
+```powershell
+python main.py --predict --mode completo
+```
+
+Gerar Excel consolidado com as abas do briefing:
+
+```powershell
+python main.py --export
 ```
 
 Abrir interface web local:
@@ -182,6 +200,7 @@ data/processed/lotofacil_ml_predictions.csv
 data/processed/lotofacil_ml_summary.csv
 data/processed/lotofacil_optimizer_candidates.csv
 data/processed/lotofacil_optimizer_summary.csv
+data/processed/lotofacil_jogos_gerados.csv
 data/processed/lotofacil_prediction.csv
 data/processed/lotofacil_state.json
 data/exports/lotofacil_historico.xlsx
@@ -192,8 +211,10 @@ data/exports/lotofacil_backtest.xlsx
 data/exports/lotofacil_auditoria.xlsx
 data/exports/lotofacil_ml.xlsx
 data/exports/lotofacil_optimizer.xlsx
+data/exports/lotofacil_jogos_gerados.xlsx
 data/exports/lotofacil_prediction.xlsx
 data/exports/lotofacil_prediction_report.md
+data/exports/lotofacil_analytics_completo.xlsx
 logs/lotofacil_analytics.log
 ```
 
@@ -304,7 +325,8 @@ Componentes do score:
 1. equilibrio estatistico: soma, pares, faixas, repeticao com ultimo concurso e sequencias;
 2. historico recente: media de frequencia nos ultimos 100 concursos;
 3. anti-popularidade humana: penaliza excesso de numeros baixos, linhas/colunas completas, diagonais fortes e sequencias longas;
-4. combinatorio: penaliza pares historicamente muito frequentes.
+4. combinatorio: penaliza pares historicamente muito frequentes;
+5. contextual: considera data do proximo concurso, dia da semana, mes, trimestre, semestre, estacao do ano, fase da lua no horario de Brasilia e numerologia exploratoria.
 
 Essa fase gera candidatos para a selecao final. Ela nao afirma que os candidatos sao previsoes garantidas.
 
@@ -324,6 +346,68 @@ Regras:
 6. diversidade minima configuravel por `--max-overlap-final`.
 
 A saida de tela e curta. O detalhe tecnico fica em `data/exports/lotofacil_prediction_report.md`.
+
+Modos disponiveis:
+
+1. `--mode rapido`: usa os arquivos ja calculados e gera os 2 jogos rapidamente.
+2. `--mode completo`: atualiza a base, recalcula features, dezenas, combinacoes, backtest, auditoria, ML, otimizacao e depois gera os 2 jogos.
+3. `--mode experimental`: refaz a otimizacao com limites maiores e depois gera os 2 jogos.
+
+Contexto usado na previsao final:
+
+1. `data_proximo_concurso` vinda da API da CAIXA;
+2. dia da semana dessa data;
+3. periodo do ano: mes, trimestre, semestre e estacao;
+4. fase, idade e iluminacao aproximada da lua no horario de Brasilia;
+5. numerologia exploratoria da data, do concurso e de dia+mes;
+6. score contextual historico por dia da semana, periodo do ano e fase lunar.
+
+A API da CAIXA nao informa a hora exata dentro do JSON historico. O sistema usa 20:00 no fuso `America/Sao_Paulo` como padrao configuravel:
+
+```powershell
+python main.py --predict --draw-hour 20 --draw-minute 0
+```
+
+Os dois jogos gerados sao sempre jogos completos de 15 dezenas. O sistema nao divide uma previsao em metades entre sugestoes.
+
+## Geracao manual de jogos
+
+O comando `python main.py --generate-games --method balanceado_basico --qty 10` gera jogos intermediarios para estudo e salva:
+
+1. `data/processed/lotofacil_jogos_gerados.csv`;
+2. `data/exports/lotofacil_jogos_gerados.xlsx`.
+
+Metodos aceitos:
+
+1. `aleatorio_puro`;
+2. `balanceado_basico`;
+3. `frequencia_quente`;
+4. `frequencia_fria`;
+5. `hibrido_quente_frio`;
+6. `score_equilibrado`;
+7. `anti_popularidade_humana`;
+8. `monte_carlo_filtrado`;
+9. `genetico_opcional`.
+
+## Export consolidado
+
+O comando `python main.py --export` gera `data/exports/lotofacil_analytics_completo.xlsx` com as abas do briefing:
+
+1. `concursos_raw`;
+2. `concursos`;
+3. `concursos_features`;
+4. `dezenas_long`;
+5. `dezenas_historico`;
+6. `frequencias`;
+7. `atrasos`;
+8. `pares`;
+9. `trios`;
+10. `quartetos`;
+11. `rankings`;
+12. `backtest`;
+13. `jogos_gerados`;
+14. `parametros`;
+15. `logs_execucao`.
 
 ## Interface e executavel da Fase 10
 
@@ -357,11 +441,18 @@ python -m unittest discover -s tests
 
 ## Limitacoes
 
-1. A Fase 1 ainda nao calcula features estatisticas.
-2. Ainda nao ha backtesting.
-3. Ainda nao ha geracao dos 2 jogos finais.
-4. Machine learning fica para fases posteriores, depois da base validada.
+1. O projeto nao prova previsao de loteria; ele testa hipoteses contra baseline aleatorio.
+2. Lua, dia da semana, periodo do ano e numerologia entram como fatores exploratorios de score. Eles nao sao tratados como prova cientifica de previsao.
+3. Clima, peso de bolas, maquina usada, desgaste e manutencao nao entram como fator preditivo enquanto nao houver fonte historica publica, confiavel e auditavel para cada concurso.
+4. O custo teorico da aposta nao e inferido da API da CAIXA; no backtest, premio teorico vem das faixas do concurso, mas custo/ROI ficam nulos quando nao houver fonte local confiavel.
+5. A regressao logistica simples foi priorizada por auditabilidade. Modelos mais pesados devem ser adicionados apenas se trouxerem ganho real fora da amostra.
 
-## Proximas fases
+## Expansao futura para Mega-Sena
 
-1. Geracao final de exatamente 2 jogos de 15 dezenas.
+Para expandir para Mega-Sena, nao reutilize diretamente as regras da Lotofacil. Crie um pacote separado com:
+
+1. regra de 6 dezenas entre 1 e 60;
+2. novo normalizador;
+3. validadores proprios;
+4. features e backtests ajustados ao espaco combinatorio da Mega-Sena;
+5. comandos isolados para evitar misturar bases.

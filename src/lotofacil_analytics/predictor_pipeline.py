@@ -23,6 +23,8 @@ class PredictorPipeline:
         generations: int,
         population: int,
         max_overlap: int,
+        draw_hour: int = 20,
+        draw_minute: int = 0,
     ) -> PredictionSummary:
         concursos = load_processed_csv(self.config.processed_csv_path)
         if concursos.empty:
@@ -38,6 +40,8 @@ class PredictorPipeline:
             generations=generations,
             population=population,
             max_overlap=max_overlap,
+            draw_hour=draw_hour,
+            draw_minute=draw_minute,
             prediction_csv_path=self.config.prediction_csv_path,
             report_path=self.config.prediction_report_path,
             excel_path=self.config.prediction_excel_path,

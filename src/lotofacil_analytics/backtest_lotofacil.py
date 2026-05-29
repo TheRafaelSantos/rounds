@@ -56,6 +56,15 @@ def _format_nums(nums: Sequence[int]) -> str:
     return " ".join(f"{int(n):02d}" for n in sorted(nums))
 
 
+def _premio_teorico(row: pd.Series, hits: int) -> float:
+    if hits < 11:
+        return 0.0
+    value = row.get(f"premio_{hits}")
+    if value is None or pd.isna(value):
+        return 0.0
+    return float(value)
+
+
 def _counts(train_draws: Sequence[Sequence[int]], *, window: int | None = None) -> Counter[int]:
     draws = train_draws[-window:] if window else train_draws
     counter: Counter[int] = Counter()
@@ -211,6 +220,7 @@ def run_backtest(
 
         for method, nums in methods.items():
             hits = compute_hits(nums, real)
+            premio_teorico = _premio_teorico(df.loc[idx], hits)
             rows.append(
                 {
                     "modelo_nome": method,
@@ -226,11 +236,15 @@ def run_backtest(
                     "acertou_13": int(hits >= 13),
                     "acertou_14": int(hits >= 14),
                     "acertou_15": int(hits >= 15),
+                    "custo_teorico_aposta": None,
+                    "premio_teorico_recebido": premio_teorico,
+                    "lucro_prejuizo_teorico": None,
+                    "roi_teorico": None,
                     "metodo_geracao": method,
                     "seed_randomica": int(seed),
                     "janela_frequencia": int(window),
                     "candidatos_balanceado": int(candidates),
-                    "observacao": "walk_forward_sem_dados_futuros",
+                    "observacao": "walk_forward_sem_dados_futuros; custo_aposta_nao_inferido_da_api",
                 }
             )
 

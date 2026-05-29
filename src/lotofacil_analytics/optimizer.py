@@ -9,6 +9,7 @@ from typing import Dict, List, Sequence, Tuple
 import pandas as pd
 
 from .backtest_lotofacil import PICK_SIZE
+from .context_features import ContextModel, build_context_model, score_contextual_candidate
 from .normalize import DEZENAS
 
 
@@ -121,6 +122,7 @@ def score_candidate(
     last_draw: Sequence[int],
     freq_recent: Counter[int],
     pair_freq: Counter[Tuple[int, int]],
+    context_model: ContextModel | None = None,
 ) -> Dict[str, float | int | str]:
     nums = sorted(int(n) for n in nums)
     pairs = sum(1 for n in nums if n % 2 == 0)
@@ -159,22 +161,30 @@ def score_candidate(
     pair_median = float(pd.Series(list(pair_freq.values())).median()) if pair_freq else 0.0
     combinatorio_penalty = max(0.0, avg_pair_freq - pair_median) / 12.0
     score_combinatorio = _score_0_100(combinatorio_penalty)
+    context_row: Dict[str, object] = (
+        score_contextual_candidate(nums, context_model)
+        if context_model is not None
+        else {"score_contextual": 50.0}
+    )
+    score_contextual = float(context_row["score_contextual"])
 
     score_final = round(
-        0.35 * score_estatistico
-        + 0.25 * score_historico
-        + 0.25 * score_anti_popularidade
-        + 0.15 * score_combinatorio,
+        0.30 * score_estatistico
+        + 0.22 * score_historico
+        + 0.20 * score_anti_popularidade
+        + 0.13 * score_combinatorio
+        + 0.15 * score_contextual,
         6,
     )
 
-    return {
+    result: Dict[str, float | int | str] = {
         "nums": _format_nums(nums),
         "score_final": score_final,
         "score_estatistico": score_estatistico,
         "score_historico": score_historico,
         "score_anti_popularidade": score_anti_popularidade,
         "score_combinatorio": score_combinatorio,
+        "score_contextual": round(float(score_contextual), 6),
         "soma": int(total),
         "qtd_pares": int(pairs),
         "overlap_ultimo": int(overlap_last),
@@ -185,6 +195,10 @@ def score_candidate(
         "media_freq_recente": round(float(avg_recent_freq), 6),
         "media_freq_pares": round(float(avg_pair_freq), 6),
     }
+    for key, value in context_row.items():
+        if key != "score_contextual":
+            result[key] = value  # type: ignore[assignment]
+    return result
 
 
 def _random_candidate(rng: random.Random) -> List[int]:
@@ -215,6 +229,8 @@ def build_optimized_candidates(
     top_games: int = 100,
     generations: int = 20,
     population: int = 80,
+    draw_hour: int = 20,
+    draw_minute: int = 0,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if concursos.empty:
         raise ValueError("Base de concursos vazia. Rode primeiro: python main.py --update")
@@ -226,6 +242,7 @@ def build_optimized_candidates(
     last_draw = draws[-1]
     freq_recent = _recent_freq(draws, window=100)
     pair_freq = _pair_counter(draws)
+    context_model = build_context_model(df, draw_hour=draw_hour, draw_minute=draw_minute)
     rng = random.Random(seed)
 
     scored: Dict[Tuple[int, ...], Dict[str, object]] = {}
@@ -235,7 +252,14 @@ def build_optimized_candidates(
         key = tuple(nums)
         if key in existing:
             continue
-        row = score_candidate(nums, profile=profile, last_draw=last_draw, freq_recent=freq_recent, pair_freq=pair_freq)
+        row = score_candidate(
+            nums,
+            profile=profile,
+            last_draw=last_draw,
+            freq_recent=freq_recent,
+            pair_freq=pair_freq,
+            context_model=context_model,
+        )
         row["metodo"] = "monte_carlo_filtrado"
         scored[key] = row
 
@@ -253,7 +277,14 @@ def build_optimized_candidates(
             key = tuple(nums)
             if key in existing:
                 continue
-            row = score_candidate(nums, profile=profile, last_draw=last_draw, freq_recent=freq_recent, pair_freq=pair_freq)
+            row = score_candidate(
+                nums,
+                profile=profile,
+                last_draw=last_draw,
+                freq_recent=freq_recent,
+                pair_freq=pair_freq,
+                context_model=context_model,
+            )
             row["metodo"] = "genetico_simples"
             if key not in scored or float(row["score_final"]) > float(scored[key]["score_final"]):
                 scored[key] = row
@@ -270,6 +301,15 @@ def build_optimized_candidates(
             {"metrica": "top_games", "valor": int(top_games)},
             {"metrica": "generations", "valor": int(generations)},
             {"metrica": "population", "valor": int(population)},
+            {"metrica": "draw_hour_brasilia", "valor": int(draw_hour)},
+            {"metrica": "draw_minute_brasilia", "valor": int(draw_minute)},
+            {"metrica": "data_proximo_concurso", "valor": context_model.target.data_proximo_concurso},
+            {"metrica": "dia_semana_proximo_concurso", "valor": context_model.target.dia_semana_nome},
+            {"metrica": "fase_lua_proximo_concurso", "valor": context_model.target.fase_lua},
+            {"metrica": "idade_lua_proximo_concurso", "valor": context_model.target.idade_lua},
+            {"metrica": "iluminacao_lua_proximo_concurso", "valor": context_model.target.iluminacao_lua_percentual},
+            {"metrica": "numerologia_data_raiz", "valor": context_model.target.numerologia_data_raiz},
+            {"metrica": "numerologia_concurso_raiz", "valor": context_model.target.numerologia_concurso_raiz},
             {"metrica": "candidatos_unicos_avaliados", "valor": int(len(scored))},
             {"metrica": "melhor_score_final", "valor": float(candidates["score_final"].max()) if len(candidates) else 0.0},
             {"metrica": "ultimo_concurso_base", "valor": int(df["concurso"].max())},

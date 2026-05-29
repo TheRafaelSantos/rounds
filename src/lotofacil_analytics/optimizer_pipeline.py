@@ -22,6 +22,8 @@ class OptimizerPipeline:
         top_games: int,
         generations: int,
         population: int,
+        draw_hour: int = 20,
+        draw_minute: int = 0,
     ) -> OptimizerSummary:
         concursos = load_processed_csv(self.config.processed_csv_path)
         if concursos.empty:
@@ -34,6 +36,8 @@ class OptimizerPipeline:
             top_games=top_games,
             generations=generations,
             population=population,
+            draw_hour=draw_hour,
+            draw_minute=draw_minute,
         )
         candidates = sanitize_dataframe_for_tabular_output(candidates)
         summary = sanitize_dataframe_for_tabular_output(summary)

@@ -16,7 +16,9 @@ from lotofacil_analytics.build_executable import build_executable
 from lotofacil_analytics.backtest_pipeline import BacktestPipeline
 from lotofacil_analytics.combinacoes_pipeline import CombinacoesPipeline
 from lotofacil_analytics.dezenas_pipeline import DezenasPipeline
+from lotofacil_analytics.export_full import export_full_workbook
 from lotofacil_analytics.features_pipeline import FeaturePipeline
+from lotofacil_analytics.games_pipeline import GeneratedGamesPipeline
 from lotofacil_analytics.logger import setup_logger
 from lotofacil_analytics.ml_pipeline import MLPipeline
 from lotofacil_analytics.optimizer_pipeline import OptimizerPipeline
@@ -41,6 +43,8 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--ml", action="store_true", help="Executa ML temporal leve da Fase 7.")
     mode.add_argument("--optimize", action="store_true", help="Gera candidatos otimizados da Fase 8.")
     mode.add_argument("--predict", action="store_true", help="Gera exatamente 2 jogos finais da Fase 9.")
+    mode.add_argument("--export", action="store_true", help="Gera Excel consolidado com as abas do briefing.")
+    mode.add_argument("--generate-games", action="store_true", help="Gera jogos por metodo especifico para estudo/backtesting manual.")
     mode.add_argument("--serve", action="store_true", help="Inicia interface web local da Fase 10.")
     mode.add_argument("--build-exe", action="store_true", help="Gera executavel Windows com PyInstaller, se instalado.")
 
@@ -66,6 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--generations", type=int, default=20, help="Geracoes do genetico simples.")
     parser.add_argument("--population", type=int, default=80, help="Populacao por geracao do genetico simples.")
     parser.add_argument("--max-overlap-final", type=int, default=10, help="Overlap maximo desejado entre os 2 jogos finais.")
+    parser.add_argument("--mode", choices=["rapido", "completo", "experimental"], default="rapido", help="Modo do --predict.")
+    parser.add_argument("--method", default="balanceado_basico", help="Metodo do --generate-games.")
+    parser.add_argument("--qty", type=int, default=10, help="Quantidade de jogos do --generate-games.")
+    parser.add_argument("--draw-hour", type=int, default=20, help="Hora de Brasilia usada para contexto lunar do proximo sorteio.")
+    parser.add_argument("--draw-minute", type=int, default=0, help="Minuto de Brasilia usado para contexto lunar do proximo sorteio.")
     parser.add_argument("--host", default="127.0.0.1", help="Host da interface web local.")
     parser.add_argument("--port", type=int, default=8765, help="Porta da interface web local.")
     return parser
@@ -74,6 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    if not (0 <= int(args.draw_hour) <= 23 and 0 <= int(args.draw_minute) <= 59):
+        parser.error("--draw-hour deve estar entre 0 e 23 e --draw-minute entre 0 e 59.")
 
     if not (
         args.update
@@ -87,6 +98,8 @@ def main() -> int:
         or args.ml
         or args.optimize
         or args.predict
+        or args.export
+        or args.generate_games
         or args.serve
         or args.build_exe
     ):
@@ -108,7 +121,65 @@ def main() -> int:
             return 0
         if args.build_exe:
             summary = build_executable(config.base_dir)
+        elif args.export:
+            summary = export_full_workbook(config=config, logger=logger)
+        elif args.generate_games:
+            summary = GeneratedGamesPipeline(config=config, logger=logger).run(
+                method=args.method,
+                qty=args.qty,
+                seed=args.seed,
+                window=args.window,
+                candidates=args.candidates,
+                candidate_pool=args.candidate_pool,
+                generations=args.generations,
+                population=args.population,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+            )
         elif args.predict:
+            if args.mode == "completo":
+                pipeline.update(force_full=False, from_concurso=args.from_concurso, to_concurso=args.to_concurso)
+                FeaturePipeline(config=config, logger=logger).build_base_features()
+                DezenasPipeline(config=config, logger=logger).build_history()
+                CombinacoesPipeline(config=config, logger=logger).build_combinacoes()
+                BacktestPipeline(config=config, logger=logger).run(
+                    n_eval=args.n_eval,
+                    min_history=args.min_history,
+                    seed=args.seed,
+                    window=args.window,
+                    candidates=args.candidates,
+                )
+                AuditoriaPipeline(config=config, logger=logger).run(
+                    monte_carlo_runs=args.monte_carlo_runs,
+                    seed=args.seed,
+                )
+                MLPipeline(config=config, logger=logger).run(
+                    train_ratio=args.train_ratio,
+                    validation_ratio=args.validation_ratio,
+                    epochs=args.epochs,
+                    learning_rate=args.learning_rate,
+                    l2=args.l2,
+                    seed=args.seed,
+                )
+                OptimizerPipeline(config=config, logger=logger).run(
+                    seed=args.seed,
+                    candidate_pool=args.candidate_pool,
+                    top_games=args.top_games,
+                    generations=args.generations,
+                    population=args.population,
+                    draw_hour=args.draw_hour,
+                    draw_minute=args.draw_minute,
+                )
+            elif args.mode == "experimental":
+                OptimizerPipeline(config=config, logger=logger).run(
+                    seed=args.seed,
+                    candidate_pool=max(args.candidate_pool, 50000),
+                    top_games=max(args.top_games, 200),
+                    generations=max(args.generations, 50),
+                    population=max(args.population, 150),
+                    draw_hour=args.draw_hour,
+                    draw_minute=args.draw_minute,
+                )
             summary = PredictorPipeline(config=config, logger=logger).predict(
                 seed=args.seed,
                 candidate_pool=args.candidate_pool,
@@ -116,6 +187,8 @@ def main() -> int:
                 generations=args.generations,
                 population=args.population,
                 max_overlap=args.max_overlap_final,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
             )
         elif args.optimize:
             summary = OptimizerPipeline(config=config, logger=logger).run(
@@ -124,6 +197,8 @@ def main() -> int:
                 top_games=args.top_games,
                 generations=args.generations,
                 population=args.population,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
             )
         elif args.ml:
             summary = MLPipeline(config=config, logger=logger).run(
