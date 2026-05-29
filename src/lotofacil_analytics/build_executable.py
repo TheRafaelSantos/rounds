@@ -36,6 +36,8 @@ def build_executable(base_dir: Path, *, name: str = "lotofacil-analytics") -> Bu
         "-m",
         "PyInstaller",
         "--onefile",
+        "--paths",
+        str(base_dir / "src"),
         "--name",
         name,
         "main.py",
