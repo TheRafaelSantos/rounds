@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import unittest
 
+import pandas as pd
+
+from lotofacil_analytics.features_base import build_base_features
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.validators import DataValidationError, validate_contest_record, validate_dataset
 
@@ -47,6 +50,22 @@ class LotofacilValidationTest(unittest.TestCase):
         record = normalize_contest(sample_payload())
         with self.assertRaises(DataValidationError):
             validate_dataset([record, record])
+
+    def test_build_base_features_uses_previous_contest_only(self) -> None:
+        first = normalize_contest(sample_payload(1))
+        second_payload = sample_payload(2)
+        second_payload["listaDezenas"] = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15"]
+        second_payload["dezenasSorteadasOrdemSorteio"] = list(second_payload["listaDezenas"])
+        second = normalize_contest(second_payload)
+
+        features = build_base_features(pd.DataFrame([first, second]))
+
+        self.assertEqual(int(features.loc[0, "qtd_repetidas_anterior"]), 0)
+        self.assertTrue(pd.isna(features.loc[0, "qtd_novas_vs_anterior"]))
+        self.assertEqual(int(features.loc[1, "qtd_repetidas_anterior"]), 9)
+        self.assertEqual(int(features.loc[1, "qtd_pares"]), 7)
+        self.assertEqual(int(features.loc[1, "faixa_01_05"]), 5)
+        self.assertEqual(int(features.loc[1, "maior_sequencia_consecutiva"]), 15)
 
 
 if __name__ == "__main__":

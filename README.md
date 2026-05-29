@@ -6,7 +6,10 @@ Este projeto nao promete previsao de resultado, nao incentiva aposta e nao deve 
 
 ## Estado atual
 
-Fase implementada: **Fase 1 - Base de dados**.
+Fases implementadas:
+
+1. **Fase 1 - Base de dados**.
+2. **Fase 2 - Features basicas**.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -62,6 +65,12 @@ Ver estado local:
 python main.py --status
 ```
 
+Gerar features basicas:
+
+```powershell
+python main.py --features
+```
+
 ## Saidas geradas
 
 Arquivos locais gerados:
@@ -69,8 +78,10 @@ Arquivos locais gerados:
 ```text
 data/raw/lotofacil/
 data/processed/lotofacil_concursos.csv
+data/processed/lotofacil_features_base.csv
 data/processed/lotofacil_state.json
 data/exports/lotofacil_historico.xlsx
+data/exports/lotofacil_features_base.xlsx
 logs/lotofacil_analytics.log
 ```
 
@@ -84,6 +95,21 @@ Esses arquivos sao ignorados pelo Git porque sao reproduziveis por comando e mud
 4. Concurso nao pode duplicar.
 5. A data do sorteio precisa ser valida.
 6. O historico local precisa ser continuo, sem buracos entre primeiro e ultimo concurso.
+
+## Features da Fase 2
+
+O comando `python main.py --features` gera uma tabela separada com:
+
+1. features temporais: ano, mes, dia, semana do mes, quinzena, bimestre, trimestre e semestre;
+2. paridade: quantidade de pares e impares;
+3. soma, media, menor dezena, maior dezena e amplitude;
+4. contagem de primos, Fibonacci e quadrados perfeitos;
+5. faixas 01-05, 06-10, 11-15, 16-20 e 21-25;
+6. linhas e colunas do volante 5x5;
+7. gaps, sequencias consecutivas e maior sequencia;
+8. repeticao em relacao ao concurso anterior.
+
+Essas features nao usam concursos futuros. Frequencia historica, atraso e rankings dinamicos ficam para a Fase 3.
 
 ## Testes
 
@@ -101,9 +127,8 @@ python -m unittest discover -s tests
 
 ## Proximas fases
 
-1. Features basicas.
-2. Historico por dezena.
-3. Pares, trios, quartetos e assinaturas.
-4. Backtesting com baseline aleatorio.
-5. Auditoria estatistica.
-6. Geração final de exatamente 2 jogos de 15 dezenas.
+1. Historico por dezena.
+2. Pares, trios, quartetos e assinaturas.
+3. Backtesting com baseline aleatorio.
+4. Auditoria estatistica.
+5. Geracao final de exatamente 2 jogos de 15 dezenas.

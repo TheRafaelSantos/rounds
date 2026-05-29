@@ -77,3 +77,11 @@ Depois da Fase 1 validada, a Fase 2 deve calcular features basicas sem vazamento
 4. linhas e colunas do volante;
 5. gaps e sequencias;
 6. repeticao em relacao ao concurso anterior.
+
+## Fase 2 implementada
+
+A Fase 2 gera `data/processed/lotofacil_features_base.csv` e `data/exports/lotofacil_features_base.xlsx`.
+
+As features foram mantidas fora do arquivo base `lotofacil_concursos.csv` para preservar a camada de dados normalizados da Fase 1. O comando e:
+
+`python main.py --features`

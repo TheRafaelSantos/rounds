@@ -49,3 +49,11 @@ class AppConfig:
     @property
     def state_path(self) -> Path:
         return self.processed_dir / "lotofacil_state.json"
+
+    @property
+    def features_base_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_features_base.csv"
+
+    @property
+    def features_base_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_features_base.xlsx"
