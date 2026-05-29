@@ -20,6 +20,7 @@ from lotofacil_analytics.logger import setup_logger
 from lotofacil_analytics.ml_pipeline import MLPipeline
 from lotofacil_analytics.optimizer_pipeline import OptimizerPipeline
 from lotofacil_analytics.pipeline import LotofacilPipeline
+from lotofacil_analytics.predictor_pipeline import PredictorPipeline
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--audit", action="store_true", help="Executa auditoria estatistica exploratoria da Fase 6.")
     mode.add_argument("--ml", action="store_true", help="Executa ML temporal leve da Fase 7.")
     mode.add_argument("--optimize", action="store_true", help="Gera candidatos otimizados da Fase 8.")
+    mode.add_argument("--predict", action="store_true", help="Gera exatamente 2 jogos finais da Fase 9.")
 
     parser.add_argument("--base-dir", default=".", help="Pasta raiz do projeto.")
     parser.add_argument("--timeout", type=float, default=30.0, help="Timeout por requisicao HTTP, em segundos.")
@@ -59,6 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top-games", type=int, default=100, help="Quantidade de candidatos finais a salvar.")
     parser.add_argument("--generations", type=int, default=20, help="Geracoes do genetico simples.")
     parser.add_argument("--population", type=int, default=80, help="Populacao por geracao do genetico simples.")
+    parser.add_argument("--max-overlap-final", type=int, default=10, help="Overlap maximo desejado entre os 2 jogos finais.")
     return parser
 
 
@@ -77,6 +80,7 @@ def main() -> int:
         or args.audit
         or args.ml
         or args.optimize
+        or args.predict
     ):
         parser.print_help()
         return 2
@@ -91,7 +95,16 @@ def main() -> int:
     pipeline = LotofacilPipeline(config=config, logger=logger)
 
     try:
-        if args.optimize:
+        if args.predict:
+            summary = PredictorPipeline(config=config, logger=logger).predict(
+                seed=args.seed,
+                candidate_pool=args.candidate_pool,
+                top_games=args.top_games,
+                generations=args.generations,
+                population=args.population,
+                max_overlap=args.max_overlap_final,
+            )
+        elif args.optimize:
             summary = OptimizerPipeline(config=config, logger=logger).run(
                 seed=args.seed,
                 candidate_pool=args.candidate_pool,

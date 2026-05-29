@@ -16,6 +16,7 @@ Fases implementadas:
 6. **Fase 6 - Auditoria estatistica exploratoria**.
 7. **Fase 7 - Machine learning temporal leve**.
 8. **Fase 8 - Otimizacao heuristica de candidatos**.
+9. **Fase 9 - Geracao final de 2 jogos**.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -137,6 +138,12 @@ Gerar candidatos com parametros:
 python main.py --optimize --candidate-pool 20000 --top-games 100 --generations 30 --population 100 --seed 123
 ```
 
+Gerar exatamente 2 jogos finais:
+
+```powershell
+python main.py --predict
+```
+
 ## Saidas geradas
 
 Arquivos locais gerados:
@@ -162,6 +169,7 @@ data/processed/lotofacil_ml_predictions.csv
 data/processed/lotofacil_ml_summary.csv
 data/processed/lotofacil_optimizer_candidates.csv
 data/processed/lotofacil_optimizer_summary.csv
+data/processed/lotofacil_prediction.csv
 data/processed/lotofacil_state.json
 data/exports/lotofacil_historico.xlsx
 data/exports/lotofacil_features_base.xlsx
@@ -171,6 +179,8 @@ data/exports/lotofacil_backtest.xlsx
 data/exports/lotofacil_auditoria.xlsx
 data/exports/lotofacil_ml.xlsx
 data/exports/lotofacil_optimizer.xlsx
+data/exports/lotofacil_prediction.xlsx
+data/exports/lotofacil_prediction_report.md
 logs/lotofacil_analytics.log
 ```
 
@@ -284,6 +294,23 @@ Componentes do score:
 4. combinatorio: penaliza pares historicamente muito frequentes.
 
 Essa fase gera candidatos para a selecao final. Ela nao afirma que os candidatos sao previsoes garantidas.
+
+## Predicao final da Fase 9
+
+O comando `python main.py --predict` mostra exatamente 2 jogos finais de 15 dezenas.
+
+Ele usa o ranking gerado pelo otimizador quando disponivel. Se o ranking ainda nao existir, gera candidatos internamente antes da selecao.
+
+Regras:
+
+1. exatamente 2 jogos;
+2. 15 dezenas por jogo;
+3. dezenas entre 1 e 25;
+4. sem repeticao dentro do mesmo jogo;
+5. jogos distintos;
+6. diversidade minima configuravel por `--max-overlap-final`.
+
+A saida de tela e curta. O detalhe tecnico fica em `data/exports/lotofacil_prediction_report.md`.
 
 ## Testes
 

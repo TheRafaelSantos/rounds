@@ -149,3 +149,15 @@ class AppConfig:
     @property
     def optimizer_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_optimizer.xlsx"
+
+    @property
+    def prediction_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_prediction.csv"
+
+    @property
+    def prediction_report_path(self) -> Path:
+        return self.exports_dir / "lotofacil_prediction_report.md"
+
+    @property
+    def prediction_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_prediction.xlsx"

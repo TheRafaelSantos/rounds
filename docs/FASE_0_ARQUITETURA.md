@@ -182,3 +182,17 @@ Saidas:
 3. `data/exports/lotofacil_optimizer.xlsx`
 
 O otimizador combina Monte Carlo filtrado, genetico simples, score estatistico, score historico, score anti-popularidade humana e score combinatorio. A saida e um ranking de candidatos para apoiar a Fase 9.
+
+## Fase 9 implementada
+
+A Fase 9 gera exatamente 2 jogos finais com o comando:
+
+`python main.py --predict`
+
+Saidas:
+
+1. `data/processed/lotofacil_prediction.csv`
+2. `data/exports/lotofacil_prediction.xlsx`
+3. `data/exports/lotofacil_prediction_report.md`
+
+A selecao usa o ranking da Fase 8, exige jogos distintos e tenta respeitar diversidade minima por overlap maximo.

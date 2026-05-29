@@ -11,6 +11,7 @@ from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_d
 from lotofacil_analytics.features_base import build_base_features
 from lotofacil_analytics.ml_temporal import run_ml_temporal
 from lotofacil_analytics.optimizer import build_optimized_candidates, score_candidate
+from lotofacil_analytics.predictor import select_final_games
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.validators import DataValidationError, validate_contest_record, validate_dataset
 
@@ -226,6 +227,20 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertEqual(len(nums), 15)
             self.assertEqual(len(set(nums)), 15)
             self.assertTrue(all(1 <= n <= 25 for n in nums))
+
+    def test_select_final_games_returns_two_distinct_games(self) -> None:
+        candidates = pd.DataFrame(
+            [
+                {"nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15", "score_final": 99.0, "metodo": "a"},
+                {"nums": "01 02 03 04 05 06 07 08 09 16 17 18 19 20 21", "score_final": 98.0, "metodo": "b"},
+                {"nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15", "score_final": 97.0, "metodo": "c"},
+            ]
+        )
+        final_games = select_final_games(candidates, max_overlap=10)
+
+        self.assertEqual(len(final_games), 2)
+        self.assertNotEqual(final_games.loc[0, "nums"], final_games.loc[1, "nums"])
+        self.assertLessEqual(int(final_games.loc[1, "overlap_com_jogo_1"]), 10)
 
 
 if __name__ == "__main__":
