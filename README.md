@@ -15,6 +15,7 @@ Fases implementadas:
 5. **Fase 5 - Backtesting inicial**.
 6. **Fase 6 - Auditoria estatistica exploratoria**.
 7. **Fase 7 - Machine learning temporal leve**.
+8. **Fase 8 - Otimizacao heuristica de candidatos**.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -124,6 +125,18 @@ Rodar ML com parametros:
 python main.py --ml --train-ratio 0.70 --validation-ratio 0.15 --epochs 400 --learning-rate 0.05 --l2 0.001 --seed 123
 ```
 
+Gerar candidatos otimizados:
+
+```powershell
+python main.py --optimize
+```
+
+Gerar candidatos com parametros:
+
+```powershell
+python main.py --optimize --candidate-pool 20000 --top-games 100 --generations 30 --population 100 --seed 123
+```
+
 ## Saidas geradas
 
 Arquivos locais gerados:
@@ -147,6 +160,8 @@ data/processed/lotofacil_auditoria_monte_carlo.csv
 data/processed/lotofacil_ml_dataset.csv
 data/processed/lotofacil_ml_predictions.csv
 data/processed/lotofacil_ml_summary.csv
+data/processed/lotofacil_optimizer_candidates.csv
+data/processed/lotofacil_optimizer_summary.csv
 data/processed/lotofacil_state.json
 data/exports/lotofacil_historico.xlsx
 data/exports/lotofacil_features_base.xlsx
@@ -155,6 +170,7 @@ data/exports/lotofacil_combinacoes.xlsx
 data/exports/lotofacil_backtest.xlsx
 data/exports/lotofacil_auditoria.xlsx
 data/exports/lotofacil_ml.xlsx
+data/exports/lotofacil_optimizer.xlsx
 logs/lotofacil_analytics.log
 ```
 
@@ -255,6 +271,19 @@ O comando `python main.py --ml` cria um dataset temporal com uma linha por concu
 O split e temporal. O modelo treina nos concursos iniciais, valida no bloco seguinte e testa no bloco final. As features de cada linha usam apenas concursos anteriores ao concurso avaliado.
 
 Esta fase nao usa `scikit-learn` para manter instalacao leve. O objetivo e criar uma referencia auditavel, nao maximizar complexidade.
+
+## Otimizacao da Fase 8
+
+O comando `python main.py --optimize` gera candidatos ranqueados por score composto.
+
+Componentes do score:
+
+1. equilibrio estatistico: soma, pares, faixas, repeticao com ultimo concurso e sequencias;
+2. historico recente: media de frequencia nos ultimos 100 concursos;
+3. anti-popularidade humana: penaliza excesso de numeros baixos, linhas/colunas completas, diagonais fortes e sequencias longas;
+4. combinatorio: penaliza pares historicamente muito frequentes.
+
+Essa fase gera candidatos para a selecao final. Ela nao afirma que os candidatos sao previsoes garantidas.
 
 ## Testes
 

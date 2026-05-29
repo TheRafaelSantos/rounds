@@ -168,3 +168,17 @@ Saidas:
 4. `data/exports/lotofacil_ml.xlsx`
 
 O modelo principal e uma regressao logistica simples implementada com `numpy`, comparada contra baselines de frequencia, atraso e aleatorio. O split e temporal e as features de cada concurso usam apenas concursos anteriores.
+
+## Fase 8 implementada
+
+A Fase 8 gera candidatos otimizados com o comando:
+
+`python main.py --optimize`
+
+Saidas:
+
+1. `data/processed/lotofacil_optimizer_candidates.csv`
+2. `data/processed/lotofacil_optimizer_summary.csv`
+3. `data/exports/lotofacil_optimizer.xlsx`
+
+O otimizador combina Monte Carlo filtrado, genetico simples, score estatistico, score historico, score anti-popularidade humana e score combinatorio. A saida e um ranking de candidatos para apoiar a Fase 9.
