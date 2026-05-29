@@ -101,3 +101,23 @@ class AppConfig:
     @property
     def backtest_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_backtest.xlsx"
+
+    @property
+    def auditoria_resumo_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_auditoria_resumo.csv"
+
+    @property
+    def auditoria_dezenas_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_auditoria_dezenas.csv"
+
+    @property
+    def auditoria_anomalias_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_auditoria_anomalias.csv"
+
+    @property
+    def auditoria_monte_carlo_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_auditoria_monte_carlo.csv"
+
+    @property
+    def auditoria_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_auditoria.xlsx"

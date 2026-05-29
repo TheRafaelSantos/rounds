@@ -11,6 +11,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from lotofacil_analytics.config import AppConfig
+from lotofacil_analytics.auditoria_pipeline import AuditoriaPipeline
 from lotofacil_analytics.backtest_pipeline import BacktestPipeline
 from lotofacil_analytics.combinacoes_pipeline import CombinacoesPipeline
 from lotofacil_analytics.dezenas_pipeline import DezenasPipeline
@@ -31,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--dezenas", action="store_true", help="Gera historico por dezena da Fase 3.")
     mode.add_argument("--combinacoes", action="store_true", help="Gera combinacoes e assinaturas da Fase 4.")
     mode.add_argument("--backtest", action="store_true", help="Executa backtest walk-forward da Fase 5.")
+    mode.add_argument("--audit", action="store_true", help="Executa auditoria estatistica exploratoria da Fase 6.")
 
     parser.add_argument("--base-dir", default=".", help="Pasta raiz do projeto.")
     parser.add_argument("--timeout", type=float, default=30.0, help="Timeout por requisicao HTTP, em segundos.")
@@ -43,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=123, help="Seed para metodos randomicos.")
     parser.add_argument("--window", type=int, default=100, help="Janela de frequencia recente para metodos simples.")
     parser.add_argument("--candidates", type=int, default=1000, help="Candidatos aleatorios avaliados pelo balanceado_basico.")
+    parser.add_argument("--monte-carlo-runs", type=int, default=500, help="Rodadas de Monte Carlo para auditoria.")
     return parser
 
 
@@ -50,7 +53,7 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    if not (args.update or args.full or args.status or args.features or args.dezenas or args.combinacoes or args.backtest):
+    if not (args.update or args.full or args.status or args.features or args.dezenas or args.combinacoes or args.backtest or args.audit):
         parser.print_help()
         return 2
 
@@ -64,7 +67,12 @@ def main() -> int:
     pipeline = LotofacilPipeline(config=config, logger=logger)
 
     try:
-        if args.backtest:
+        if args.audit:
+            summary = AuditoriaPipeline(config=config, logger=logger).run(
+                monte_carlo_runs=args.monte_carlo_runs,
+                seed=args.seed,
+            )
+        elif args.backtest:
             summary = BacktestPipeline(config=config, logger=logger).run(
                 n_eval=args.n_eval,
                 min_history=args.min_history,

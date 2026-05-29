@@ -137,3 +137,19 @@ Metodos iniciais:
 5. `balanceado_basico`
 
 Cada previsao do backtest usa apenas concursos anteriores ao concurso avaliado.
+
+## Fase 6 implementada
+
+A Fase 6 executa auditoria estatistica exploratoria com o comando:
+
+`python main.py --audit`
+
+Saidas:
+
+1. `data/processed/lotofacil_auditoria_resumo.csv`
+2. `data/processed/lotofacil_auditoria_dezenas.csv`
+3. `data/processed/lotofacil_auditoria_anomalias.csv`
+4. `data/processed/lotofacil_auditoria_monte_carlo.csv`
+5. `data/exports/lotofacil_auditoria.xlsx`
+
+A auditoria inclui frequencia por dezena, qui-quadrado aproximado, entropia, anomalias simples e Monte Carlo para repeticao media entre concursos.

@@ -13,6 +13,7 @@ Fases implementadas:
 3. **Fase 3 - Historico por dezena**.
 4. **Fase 4 - Combinacoes e assinaturas**.
 5. **Fase 5 - Backtesting inicial**.
+6. **Fase 6 - Auditoria estatistica exploratoria**.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -98,6 +99,18 @@ Rodar backtest com parametros:
 python main.py --backtest --n-eval 500 --min-history 300 --seed 123 --window 100 --candidates 2000
 ```
 
+Rodar auditoria estatistica:
+
+```powershell
+python main.py --audit
+```
+
+Rodar auditoria com mais simulacoes Monte Carlo:
+
+```powershell
+python main.py --audit --monte-carlo-runs 2000 --seed 123
+```
+
 ## Saidas geradas
 
 Arquivos locais gerados:
@@ -114,12 +127,17 @@ data/processed/lotofacil_combinacoes_trios.csv
 data/processed/lotofacil_combinacoes_quartetos.csv
 data/processed/lotofacil_backtest.csv
 data/processed/lotofacil_backtest_summary.csv
+data/processed/lotofacil_auditoria_resumo.csv
+data/processed/lotofacil_auditoria_dezenas.csv
+data/processed/lotofacil_auditoria_anomalias.csv
+data/processed/lotofacil_auditoria_monte_carlo.csv
 data/processed/lotofacil_state.json
 data/exports/lotofacil_historico.xlsx
 data/exports/lotofacil_features_base.xlsx
 data/exports/lotofacil_dezenas_historico.xlsx
 data/exports/lotofacil_combinacoes.xlsx
 data/exports/lotofacil_backtest.xlsx
+data/exports/lotofacil_auditoria.xlsx
 logs/lotofacil_analytics.log
 ```
 
@@ -195,6 +213,20 @@ O treino de cada linha usa somente concursos anteriores ao concurso avaliado. O 
 
 Esses metodos sao baselines e heuristicas simples. Resultado melhor em uma janela nao prova previsao real; serve para comparar contra o acaso e detectar overfitting nas fases futuras.
 
+## Auditoria estatistica da Fase 6
+
+O comando `python main.py --audit` gera uma auditoria exploratoria com:
+
+1. frequencia observada versus frequencia esperada por dezena;
+2. qui-quadrado aproximado para frequencia marginal das dezenas;
+3. entropia das dezenas;
+4. anomalias simples de soma, paridade e repeticao em relacao ao concurso anterior;
+5. comparacao Monte Carlo da repeticao media entre concursos.
+
+O p-value do qui-quadrado usa aproximacao Wilson-Hilferty para evitar dependencia pesada nesta fase. A comparacao de repeticao usa p-value empirico por simulacao.
+
+Auditoria nao e previsao. Ela serve para verificar se o historico parece compativel com aleatoriedade e para apontar casos extremos para estudo.
+
 ## Testes
 
 ```powershell
@@ -211,5 +243,4 @@ python -m unittest discover -s tests
 
 ## Proximas fases
 
-1. Auditoria estatistica.
-2. Geracao final de exatamente 2 jogos de 15 dezenas.
+1. Geracao final de exatamente 2 jogos de 15 dezenas.

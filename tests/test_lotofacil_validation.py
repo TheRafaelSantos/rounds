@@ -4,6 +4,7 @@ import unittest
 
 import pandas as pd
 
+from lotofacil_analytics.auditoria import build_auditoria
 from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
 from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_dezenas_long
@@ -160,6 +161,22 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertEqual(set(results["modelo_nome"]), {"aleatorio_puro", "frequencia_quente", "frequencia_fria", "hibrido_quente_frio", "balanceado_basico"})
         self.assertEqual(set(summary["modelo_nome"]), set(results["modelo_nome"]))
         self.assertTrue((results["qtd_acertos"] >= 0).all())
+
+    def test_build_auditoria_outputs_expected_tables(self) -> None:
+        rows = [
+            normalize_contest(payload_with_dezenas(1, ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15"])),
+            normalize_contest(payload_with_dezenas(2, ["02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16"])),
+            normalize_contest(payload_with_dezenas(3, ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16", "17"])),
+        ]
+
+        resumo, dezenas, anomalias, monte_carlo = build_auditoria(pd.DataFrame(rows), monte_carlo_runs=5, seed=123)
+
+        self.assertEqual(len(dezenas), 25)
+        self.assertEqual(len(monte_carlo), 5)
+        self.assertIn("chi_square_p_value_aprox", set(resumo["metrica"]))
+        self.assertIn("entropia_ratio", set(resumo["metrica"]))
+        self.assertTrue((dezenas["freq_observada"] >= 0).all())
+        self.assertIsNotNone(anomalias)
 
 
 if __name__ == "__main__":
