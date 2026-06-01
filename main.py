@@ -29,6 +29,7 @@ from lotofacil_analytics.pipeline import LotofacilPipeline
 from lotofacil_analytics.post_result_analysis import analyze_post_result
 from lotofacil_analytics.predictor_pipeline import PredictorPipeline
 from lotofacil_analytics.interface_web import run_web_server
+from lotofacil_analytics.transition_pipeline import TransitionPipeline
 
 
 def _safe_file_label(label: str) -> str:
@@ -55,6 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--features", action="store_true", help="Gera features basicas da Fase 2 a partir da base local.")
     mode.add_argument("--dezenas", action="store_true", help="Gera historico por dezena da Fase 3.")
     mode.add_argument("--combinacoes", action="store_true", help="Gera combinacoes e assinaturas da Fase 4.")
+    mode.add_argument("--transitions", action="store_true", help="Analisa transicoes concurso N contra N+1.")
     mode.add_argument("--backtest", action="store_true", help="Executa backtest walk-forward da Fase 5.")
     mode.add_argument("--audit", action="store_true", help="Executa auditoria estatistica exploratoria da Fase 6.")
     mode.add_argument("--ml", action="store_true", help="Executa ML temporal leve da Fase 7.")
@@ -128,6 +130,7 @@ def main() -> int:
         or args.features
         or args.dezenas
         or args.combinacoes
+        or args.transitions
         or args.backtest
         or args.audit
         or args.ml
@@ -343,6 +346,8 @@ def main() -> int:
             )
         elif args.combinacoes:
             summary = CombinacoesPipeline(config=config, logger=logger).build_combinacoes()
+        elif args.transitions:
+            summary = TransitionPipeline(config=config, logger=logger).run()
         elif args.dezenas:
             summary = DezenasPipeline(config=config, logger=logger).build_history()
         elif args.features:

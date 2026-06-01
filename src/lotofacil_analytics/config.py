@@ -91,6 +91,22 @@ class AppConfig:
         return self.exports_dir / "lotofacil_combinacoes.xlsx"
 
     @property
+    def transition_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_transicoes.csv"
+
+    @property
+    def transition_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_transicoes_summary.csv"
+
+    @property
+    def transition_dezenas_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_transicoes_dezenas.csv"
+
+    @property
+    def transition_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_transicoes.xlsx"
+
+    @property
     def backtest_csv_path(self) -> Path:
         return self.processed_dir / "lotofacil_backtest.csv"
 

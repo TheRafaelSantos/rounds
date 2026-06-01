@@ -17,7 +17,7 @@ from lotofacil_analytics.decision_layer import (
     run_weight_tuning,
     weights_for_profile,
 )
-from lotofacil_analytics.exhaustive_optimizer import build_exhaustive_candidates, resolve_exhaustive_weights
+from lotofacil_analytics.exhaustive_optimizer import EXHAUSTIVE_SOURCE_MODEL, build_exhaustive_candidates, resolve_exhaustive_weights
 from lotofacil_analytics.features_base import build_base_features
 from lotofacil_analytics.games import generate_games
 from lotofacil_analytics.interface_web import _html_page
@@ -27,6 +27,7 @@ from lotofacil_analytics.optimizer import build_optimized_candidates, score_cand
 from lotofacil_analytics.post_result_analysis import analyze_post_result, parse_numbers
 from lotofacil_analytics.predictor import select_final_games
 from lotofacil_analytics.normalize import normalize_contest
+from lotofacil_analytics.transition_analysis import build_transition_model, build_transition_outputs, score_transition_candidate
 from lotofacil_analytics.validators import DataValidationError, validate_contest_record, validate_dataset
 
 
@@ -299,16 +300,37 @@ class LotofacilValidationTest(unittest.TestCase):
         )
 
         self.assertEqual(len(candidates), 5)
-        self.assertEqual(set(candidates["source_model"]), {"ensemble_score_v3_exaustivo"})
+        self.assertEqual(set(candidates["source_model"]), {EXHAUSTIVE_SOURCE_MODEL})
         self.assertIn("score_localidade_numerologia", candidates.columns)
+        self.assertIn("score_transicao", candidates.columns)
         self.assertIn("contexto_cidade_sorteio", candidates.columns)
         self.assertIn("score_weights", set(summary["metrica"]))
+        self.assertIn("transicao_media_repetidas", set(summary["metrica"]))
         self.assertEqual(int(summary[summary["metrica"] == "combinacoes_avaliadas"]["valor"].iloc[0]), 200)
         for nums_text in candidates["nums"].tolist():
             nums = [int(part) for part in nums_text.split()]
             self.assertEqual(len(nums), 15)
             self.assertEqual(len(set(nums)), 15)
             self.assertTrue(all(1 <= n <= 25 for n in nums))
+
+    def test_transition_outputs_compare_consecutive_draws(self) -> None:
+        rows = []
+        for idx in range(1, 6):
+            rows.append(normalize_contest(payload_with_dezenas(idx, cyclic_dezenas(idx))))
+        concursos = pd.DataFrame(rows)
+
+        transitions, summary, number_stats = build_transition_outputs(concursos)
+        model = build_transition_model(concursos)
+        score = score_transition_candidate(cyclic_dezenas(6), model)
+
+        self.assertEqual(len(transitions), 4)
+        self.assertEqual(len(number_stats), 25)
+        self.assertIn("qtd_repetidas", transitions.columns)
+        self.assertIn("probabilidade_ficar_suavizada", number_stats.columns)
+        self.assertIn("media_repetidas", set(summary["metrica"]))
+        self.assertIn("score_transicao", score)
+        self.assertGreaterEqual(float(score["score_transicao"]), 0.0)
+        self.assertLessEqual(float(score["score_transicao"]), 100.0)
 
     def test_resolve_exhaustive_weights_normalizes_custom_weights(self) -> None:
         weights = resolve_exhaustive_weights({"estatistico": 2.0, "historico": 1.0})
@@ -405,6 +427,7 @@ class LotofacilValidationTest(unittest.TestCase):
         html = _html_page()
         self.assertIn("Lotofacil Analytics", html)
         self.assertIn("/api/status", html)
+        self.assertIn("/api/transitions", html)
         self.assertIn("/api/predict", html)
         self.assertIn("/api/predict-single", html)
         self.assertIn("/report", html)

@@ -10,6 +10,7 @@ from .config import AppConfig
 from .decision_layer_pipeline import DecisionLayerPipeline
 from .pipeline import LotofacilPipeline
 from .predictor_pipeline import PredictorPipeline
+from .transition_pipeline import TransitionPipeline
 
 
 def _html_page() -> str:
@@ -37,6 +38,7 @@ def _html_page() -> str:
   </header>
   <button onclick="status()">Status</button>
   <button onclick="updateBase()">Atualizar base</button>
+  <button onclick="transitions()">Analisar transições</button>
   <button onclick="predictSingle()">Gerar jogo unico</button>
   <button onclick="predict()">Gerar 2 jogos</button>
   <button onclick="window.location='/report'">Baixar relatorio</button>
@@ -54,6 +56,7 @@ def _html_page() -> str:
     }
     async function status() { await request('/api/status'); }
     async function updateBase() { await request('/api/update', {method: 'POST'}); }
+    async function transitions() { await request('/api/transitions', {method: 'POST'}); }
     async function predict() {
       const data = await request('/api/predict', {method: 'POST'});
       const games = document.getElementById('games');
@@ -134,6 +137,9 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
         def do_POST(self) -> None:
             if self.path == "/api/update":
                 self._handle_json(lambda: {"message": LotofacilPipeline(config=config, logger=logger).update(force_full=False).to_console()})
+                return
+            if self.path == "/api/transitions":
+                self._handle_json(lambda: TransitionPipeline(config=config, logger=logger).run().__dict__)
                 return
             if self.path == "/api/predict":
                 self._handle_json(lambda: PredictorPipeline(config=config, logger=logger).predict(

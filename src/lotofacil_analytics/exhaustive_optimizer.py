@@ -24,22 +24,25 @@ from .optimizer import (
     _range_signature,
     _recent_freq,
 )
+from .transition_analysis import build_transition_model, score_transition_from_omitted
 
 
 NUMBERS = tuple(range(1, MAX_DEZENA + 1))
+EXHAUSTIVE_SOURCE_MODEL = "ensemble_score_v4_exaustivo_transicao"
 TOTAL_COMBINATIONS = math.comb(MAX_DEZENA, PICK_SIZE)
 OMITTED_SIZE = MAX_DEZENA - PICK_SIZE
 PAIR_COUNT = math.comb(PICK_SIZE, 2)
 FULL_SUM = sum(NUMBERS)
 FULL_EVEN_COUNT = sum(1 for n in NUMBERS if n % 2 == 0)
 DEFAULT_EXHAUSTIVE_WEIGHTS: Dict[str, float] = {
-    "estatistico": 0.20,
-    "historico": 0.13,
-    "atraso": 0.07,
-    "combinatorio": 0.12,
-    "localidade_numerologia": 0.20,
-    "cenarios": 0.13,
-    "contrarian": 0.10,
+    "estatistico": 0.17,
+    "historico": 0.12,
+    "atraso": 0.06,
+    "combinatorio": 0.11,
+    "localidade_numerologia": 0.18,
+    "cenarios": 0.12,
+    "contrarian": 0.09,
+    "transicao": 0.10,
     "nao_repeticao_exata": 0.05,
 }
 WEIGHT_ALIASES = {
@@ -76,6 +79,7 @@ def format_exhaustive_weights(weights: Mapping[str, float]) -> str:
         "localidade_numerologia",
         "cenarios",
         "contrarian",
+        "transicao",
         "nao_repeticao_exata",
     ]
     labels = {
@@ -274,6 +278,7 @@ def build_exhaustive_candidates(
     common_signatures = _common_range_signatures(draws)
     context_model = build_context_model(df, draw_hour=draw_hour, draw_minute=draw_minute)
     context_scores = _context_number_scores(context_model)
+    transition_model = build_transition_model(df)
 
     recent_total = sum(float(recent_freq.get(n, 0)) for n in NUMBERS)
     delay_total = sum(float(delays.get(n, 0)) for n in NUMBERS)
@@ -357,6 +362,8 @@ def build_exhaustive_candidates(
         )
         score_contrarian = _contrarian_score(selected, max_run=max_run, ranges=ranges, columns=columns)
         score_localidade_numerologia = score_contextual
+        transition_detail = score_transition_from_omitted(omitted, transition_model)
+        score_transicao = float(transition_detail["score_transicao"])
 
         score_final = round(
             resolved_weights["estatistico"] * score_estatistico
@@ -366,6 +373,7 @@ def build_exhaustive_candidates(
             + resolved_weights["localidade_numerologia"] * score_localidade_numerologia
             + resolved_weights["cenarios"] * score_cenarios
             + resolved_weights["contrarian"] * score_contrarian
+            + resolved_weights["transicao"] * score_transicao
             + resolved_weights["nao_repeticao_exata"] * (100.0 if not exact_historical else 92.0),
             6,
         )
@@ -373,8 +381,8 @@ def build_exhaustive_candidates(
         if len(heap) < keep_top or score_final > heap[0][0]:
             row: Dict[str, object] = {
                 "nums": _format_nums(selected),
-                "source_model": "ensemble_score_v3_exaustivo",
-                "metodo": "ensemble_score_v3_exaustivo",
+                "source_model": EXHAUSTIVE_SOURCE_MODEL,
+                "metodo": EXHAUSTIVE_SOURCE_MODEL,
                 "score_final": score_final,
                 "score_estatistico": score_estatistico,
                 "score_historico": score_historico,
@@ -384,9 +392,20 @@ def build_exhaustive_candidates(
                 "score_localidade_numerologia": score_localidade_numerologia,
                 "score_cenarios": score_cenarios,
                 "score_contrarian": score_contrarian,
+                "score_transicao": score_transicao,
+                "score_transicao_repeticao": float(transition_detail["score_transicao_repeticao"]),
+                "score_transicao_dezenas": float(transition_detail["score_transicao_dezenas"]),
+                "score_transicao_estrutura": float(transition_detail["score_transicao_estrutura"]),
                 "soma": int(selected_sum),
                 "qtd_pares": int(selected_pairs),
                 "overlap_ultimo": int(overlap_last),
+                "transicao_repetidas": int(transition_detail["transicao_repetidas"]),
+                "transicao_entraram": int(transition_detail["transicao_entraram"]),
+                "transicao_sairam": int(transition_detail["transicao_sairam"]),
+                "transicao_delta_soma": int(transition_detail["transicao_delta_soma"]),
+                "transicao_repetidas_faixas": str(transition_detail["transicao_repetidas_faixas"]),
+                "transicao_entradas_faixas": str(transition_detail["transicao_entradas_faixas"]),
+                "transicao_saidas_faixas": str(transition_detail["transicao_saidas_faixas"]),
                 "maior_sequencia": int(max_run),
                 "faixas_5": " ".join(str(v) for v in ranges),
                 "linhas": " ".join(str(v) for v in _line_counts_from_ranges(ranges)),
@@ -423,7 +442,7 @@ def build_exhaustive_candidates(
                 candidates[col.replace("detalhe_", "", 1)] = candidates[col]
     summary = pd.DataFrame(
         [
-            {"metrica": "source_model", "valor": "ensemble_score_v3_exaustivo"},
+            {"metrica": "source_model", "valor": EXHAUSTIVE_SOURCE_MODEL},
             {"metrica": "combinacoes_possiveis", "valor": int(TOTAL_COMBINATIONS)},
             {"metrica": "combinacoes_avaliadas", "valor": int(evaluated)},
             {"metrica": "top_games_salvos", "valor": int(len(candidates))},
@@ -447,6 +466,11 @@ def build_exhaustive_candidates(
             {"metrica": "uf_sorteio_assumida", "valor": context_model.target.uf_sorteio_assumida},
             {"metrica": "bairro_sorteio_assumido", "valor": context_model.target.bairro_sorteio_assumido or "indisponivel_na_base"},
             {"metrica": "observacao_localidade", "valor": context_model.target.observacao_localidade},
+            {"metrica": "transicao_pares_consecutivos_analisados", "valor": transition_model.summary.get("pares_consecutivos_analisados", 0)},
+            {"metrica": "transicao_media_repetidas", "valor": transition_model.summary.get("media_repetidas", "")},
+            {"metrica": "transicao_mediana_repetidas", "valor": transition_model.summary.get("mediana_repetidas", "")},
+            {"metrica": "transicao_p10_repetidas", "valor": transition_model.summary.get("p10_repetidas", "")},
+            {"metrica": "transicao_p90_repetidas", "valor": transition_model.summary.get("p90_repetidas", "")},
             {"metrica": "score_weights", "valor": format_exhaustive_weights(resolved_weights)},
         ]
     )

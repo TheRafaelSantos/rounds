@@ -20,7 +20,7 @@ Fases implementadas:
 10. **Fase 10 - Interface local e build de executavel**.
 11. **Camada superior - jogo unico, validacao exaustiva, ablation test e ajuste de pesos**.
 
-Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos, backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio, motor exaustivo `ensemble_score_v3_exaustivo` e camada de decisao acima do motor atual.
+Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos, backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio, motor exaustivo `ensemble_score_v4_exaustivo_transicao` e camada de decisao acima do motor atual.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -92,6 +92,12 @@ Gerar combinacoes e assinaturas:
 
 ```powershell
 python main.py --combinacoes
+```
+
+Analisar transicoes entre concursos consecutivos:
+
+```powershell
+python main.py --transitions
 ```
 
 Rodar backtest inicial:
@@ -240,6 +246,9 @@ data/processed/lotofacil_combinacoes_features.csv
 data/processed/lotofacil_combinacoes_pares.csv
 data/processed/lotofacil_combinacoes_trios.csv
 data/processed/lotofacil_combinacoes_quartetos.csv
+data/processed/lotofacil_transicoes.csv
+data/processed/lotofacil_transicoes_summary.csv
+data/processed/lotofacil_transicoes_dezenas.csv
 data/processed/lotofacil_backtest.csv
 data/processed/lotofacil_backtest_summary.csv
 data/processed/lotofacil_backtest_final_score.csv
@@ -404,7 +413,7 @@ Esta fase nao usa `scikit-learn` para manter instalacao leve. O objetivo e criar
 
 O comando `python main.py --optimize` gera candidatos ranqueados por score composto.
 
-Por padrao, o motor atual e `ensemble_score_v3_exaustivo`. Ele avalia todas as `3.268.760` combinacoes possiveis da Lotofacil antes de salvar os melhores candidatos. Se precisar voltar ao motor anterior, use:
+Por padrao, o motor atual e `ensemble_score_v4_exaustivo_transicao`. Ele avalia todas as `3.268.760` combinacoes possiveis da Lotofacil antes de salvar os melhores candidatos. Se precisar voltar ao motor anterior, use:
 
 ```powershell
 python main.py --optimize --engine heuristico
@@ -418,17 +427,19 @@ Componentes do score:
 4. combinatorio: penaliza pares historicamente muito frequentes;
 5. contextual: considera data do proximo concurso, dia da semana, mes, trimestre, semestre, estacao do ano, fase da lua no horario de Brasilia e numerologia exploratoria;
 6. cenarios: reforca soma baixa/media/alta, sequencia forte, visual forte, assinatura historica por faixas e faixa alta 21-25;
-7. contrarian: monitora dezenas que os jogos anteriores penalizaram demais, como 01, 13 e 22.
+7. contrarian: monitora dezenas que os jogos anteriores penalizaram demais, como 01, 13 e 22;
+8. transicao: compara cada concurso com o concurso seguinte e aprende repetidas, entradas, saidas, delta de soma e mudanca por faixas.
 
 O score final `ensemble_score_v2` combina esses blocos com pesos documentados na aba/CSV de resumo do otimizador. A geracao de candidatos usa perfis variados, incluindo `soma_baixa`, `sequencia_forte`, `visual_forte`, `contrarian_controlado`, `faixa_alta_reforcada`, `assinatura_historica`, `weighted_temporal`, `monte_carlo_filtrado` e `genetico_simples`.
 
-No `ensemble_score_v3_exaustivo`, tambem entram:
+No `ensemble_score_v4_exaustivo_transicao`, tambem entram:
 
 1. varredura completa de todas as combinacoes de 15 dezenas entre 25;
 2. fase da lua calculada para todos os concursos historicos com horario de Brasilia configuravel;
 3. numerologia da data, do concurso, do dia+mes e das dezenas;
 4. localidade historica por local, cidade e UF;
-5. bairro somente se existir coluna confiavel na base. Na base atual da CAIXA, bairro nao esta disponivel.
+5. bairro somente se existir coluna confiavel na base. Na base atual da CAIXA, bairro nao esta disponivel;
+6. transicao sequencial `concurso N -> concurso N+1`, incluindo dezenas que ficaram, entraram, sairam e continuaram fora.
 
 Essa fase gera candidatos para a selecao final. Ela nao afirma que os candidatos sao previsoes garantidas.
 
@@ -475,7 +486,7 @@ Os dois jogos gerados sao sempre jogos completos de 15 dezenas. O sistema nao di
 
 ## Camada superior de decisao
 
-Essa camada nao substitui as analises existentes. Ela fica por cima do motor `ensemble_score_v3_exaustivo` e usa os mesmos blocos: estatistica, historico, atrasos, combinacoes, lua, dia da semana, periodo do ano, numerologia, localidade, cenarios e contrarian.
+Essa camada nao substitui as analises existentes. Ela fica por cima do motor `ensemble_score_v4_exaustivo_transicao` e usa os mesmos blocos: estatistica, historico, atrasos, combinacoes, lua, dia da semana, periodo do ano, numerologia, localidade, cenarios, contrarian e transicao sequencial.
 
 Comandos principais:
 
@@ -493,7 +504,8 @@ Perfis de pesos aceitos em `--weight-profile`:
 5. `contrarian_forte`;
 6. `estatistico_forte`;
 7. `cenarios_forte`;
-8. `atraso_forte`.
+8. `atraso_forte`;
+9. `transicao_forte`.
 
 Exemplo com perfil contextual mais forte:
 
@@ -506,6 +518,26 @@ Para testes rapidos de validacao tecnica, use `--exhaustive-limit`. Para varredu
 ```powershell
 python main.py --backtest-exhaustive --validation-n-eval 1 --min-history 300 --exhaustive-limit 50000
 ```
+
+## Analise de transicoes
+
+O comando `python main.py --transitions` compara o concurso 1 contra o 2, o 2 contra o 3, e assim por diante ate o concurso mais recente.
+
+Ele salva:
+
+1. `data/processed/lotofacil_transicoes.csv`: uma linha para cada par consecutivo;
+2. `data/processed/lotofacil_transicoes_summary.csv`: resumo de repetidas, entradas, saidas, delta de soma e assinaturas;
+3. `data/processed/lotofacil_transicoes_dezenas.csv`: probabilidade suavizada de cada dezena ficar quando saiu no concurso anterior ou entrar quando ficou fora;
+4. `data/exports/lotofacil_transicoes.xlsx`: Excel com as tres abas.
+
+O motor exaustivo usa esses dados no `score_transicao`. Para cada candidato ele compara o jogo proposto com o ultimo concurso disponivel e pontua:
+
+1. quantidade de dezenas repetidas;
+2. dezenas novas que entram;
+3. dezenas que saem;
+4. mudanca por faixas 01-05, 06-10, 11-15, 16-20 e 21-25;
+5. delta de soma em relacao ao concurso anterior;
+6. probabilidade historica de cada dezena permanecer ou entrar.
 
 ## Analise pos-sorteio
 
@@ -566,22 +598,25 @@ O comando `python main.py --export` gera `data/exports/lotofacil_analytics_compl
 9. `trios`;
 10. `quartetos`;
 11. `rankings`;
-12. `backtest`;
-13. `backtest_score_final`;
-14. `backtest_score_final_resumo`;
-15. `jogo_unico`;
-16. `backtest_exaustivo`;
-17. `backtest_exaustivo_resumo`;
-18. `ablation_test`;
-19. `ablation_test_resumo`;
-20. `tune_weights`;
-21. `tune_weights_resumo`;
-22. `jogos_gerados`;
-23. `pos_sorteio_jogos`;
-24. `pos_sorteio_dezenas`;
-25. `contexto_proximo_concurso`;
-26. `parametros`;
-27. `logs_execucao`.
+12. `transicoes`;
+13. `transicoes_resumo`;
+14. `transicoes_dezenas`;
+15. `backtest`;
+16. `backtest_score_final`;
+17. `backtest_score_final_resumo`;
+18. `jogo_unico`;
+19. `backtest_exaustivo`;
+20. `backtest_exaustivo_resumo`;
+21. `ablation_test`;
+22. `ablation_test_resumo`;
+23. `tune_weights`;
+24. `tune_weights_resumo`;
+25. `jogos_gerados`;
+26. `pos_sorteio_jogos`;
+27. `pos_sorteio_dezenas`;
+28. `contexto_proximo_concurso`;
+29. `parametros`;
+30. `logs_execucao`.
 
 ## Interface e executavel da Fase 10
 
@@ -597,7 +632,7 @@ Depois abra no navegador:
 http://127.0.0.1:8765
 ```
 
-A tela local permite atualizar a base, gerar 2 jogos, gerar o jogo unico da camada superior e baixar os relatorios correspondentes.
+A tela local permite atualizar a base, analisar transicoes, gerar 2 jogos, gerar o jogo unico da camada superior e baixar os relatorios correspondentes.
 
 Build de executavel:
 

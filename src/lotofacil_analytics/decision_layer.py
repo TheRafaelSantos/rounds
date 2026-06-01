@@ -11,6 +11,7 @@ from .backtest_lotofacil import nums_from_row
 from .context_features import TargetContext, build_target_context
 from .exhaustive_optimizer import (
     DEFAULT_EXHAUSTIVE_WEIGHTS,
+    EXHAUSTIVE_SOURCE_MODEL,
     TOTAL_COMBINATIONS,
     build_exhaustive_candidates,
     format_exhaustive_weights,
@@ -21,79 +22,97 @@ from .post_result_analysis import format_nums, parse_numbers
 from .predictor import AVISO_TECNICO
 
 
-SOURCE_MODEL_EXAUSTIVO = "ensemble_score_v3_exaustivo"
-SOURCE_MODEL_SINGLE = "ensemble_score_v3_exaustivo_decision_layer_single"
+SOURCE_MODEL_EXAUSTIVO = EXHAUSTIVE_SOURCE_MODEL
+SOURCE_MODEL_SINGLE = "ensemble_score_v4_exaustivo_transicao_decision_layer_single"
 
 WEIGHT_PROFILE_PRESETS: Dict[str, Dict[str, float]] = {
     "padrao_atual": dict(DEFAULT_EXHAUSTIVE_WEIGHTS),
     "contexto_forte": {
-        "estatistico": 0.15,
-        "historico": 0.10,
-        "atraso": 0.06,
-        "combinatorio": 0.10,
-        "localidade_numerologia": 0.35,
-        "cenarios": 0.11,
-        "contrarian": 0.08,
+        "estatistico": 0.14,
+        "historico": 0.09,
+        "atraso": 0.05,
+        "combinatorio": 0.09,
+        "localidade_numerologia": 0.32,
+        "cenarios": 0.10,
+        "contrarian": 0.07,
+        "transicao": 0.09,
         "nao_repeticao_exata": 0.05,
     },
     "historico_forte": {
-        "estatistico": 0.17,
-        "historico": 0.25,
-        "atraso": 0.09,
-        "combinatorio": 0.12,
-        "localidade_numerologia": 0.16,
-        "cenarios": 0.10,
-        "contrarian": 0.06,
+        "estatistico": 0.15,
+        "historico": 0.23,
+        "atraso": 0.08,
+        "combinatorio": 0.11,
+        "localidade_numerologia": 0.14,
+        "cenarios": 0.09,
+        "contrarian": 0.05,
+        "transicao": 0.10,
         "nao_repeticao_exata": 0.05,
     },
     "combinatorio_forte": {
-        "estatistico": 0.17,
-        "historico": 0.11,
-        "atraso": 0.06,
-        "combinatorio": 0.28,
-        "localidade_numerologia": 0.16,
-        "cenarios": 0.09,
-        "contrarian": 0.08,
+        "estatistico": 0.15,
+        "historico": 0.10,
+        "atraso": 0.05,
+        "combinatorio": 0.26,
+        "localidade_numerologia": 0.14,
+        "cenarios": 0.08,
+        "contrarian": 0.07,
+        "transicao": 0.10,
         "nao_repeticao_exata": 0.05,
     },
     "contrarian_forte": {
-        "estatistico": 0.16,
-        "historico": 0.10,
-        "atraso": 0.06,
-        "combinatorio": 0.10,
-        "localidade_numerologia": 0.16,
-        "cenarios": 0.12,
-        "contrarian": 0.25,
+        "estatistico": 0.14,
+        "historico": 0.09,
+        "atraso": 0.05,
+        "combinatorio": 0.09,
+        "localidade_numerologia": 0.14,
+        "cenarios": 0.10,
+        "contrarian": 0.24,
+        "transicao": 0.10,
         "nao_repeticao_exata": 0.05,
     },
     "estatistico_forte": {
-        "estatistico": 0.32,
-        "historico": 0.10,
-        "atraso": 0.06,
-        "combinatorio": 0.12,
-        "localidade_numerologia": 0.14,
-        "cenarios": 0.11,
-        "contrarian": 0.10,
+        "estatistico": 0.30,
+        "historico": 0.09,
+        "atraso": 0.05,
+        "combinatorio": 0.11,
+        "localidade_numerologia": 0.13,
+        "cenarios": 0.10,
+        "contrarian": 0.08,
+        "transicao": 0.09,
         "nao_repeticao_exata": 0.05,
     },
     "cenarios_forte": {
-        "estatistico": 0.16,
-        "historico": 0.10,
-        "atraso": 0.06,
-        "combinatorio": 0.10,
-        "localidade_numerologia": 0.16,
-        "cenarios": 0.30,
-        "contrarian": 0.07,
+        "estatistico": 0.14,
+        "historico": 0.09,
+        "atraso": 0.05,
+        "combinatorio": 0.09,
+        "localidade_numerologia": 0.14,
+        "cenarios": 0.28,
+        "contrarian": 0.06,
+        "transicao": 0.10,
         "nao_repeticao_exata": 0.05,
     },
     "atraso_forte": {
-        "estatistico": 0.17,
-        "historico": 0.13,
-        "atraso": 0.22,
-        "combinatorio": 0.10,
-        "localidade_numerologia": 0.16,
+        "estatistico": 0.15,
+        "historico": 0.12,
+        "atraso": 0.20,
+        "combinatorio": 0.09,
+        "localidade_numerologia": 0.14,
+        "cenarios": 0.09,
+        "contrarian": 0.06,
+        "transicao": 0.10,
+        "nao_repeticao_exata": 0.05,
+    },
+    "transicao_forte": {
+        "estatistico": 0.14,
+        "historico": 0.10,
+        "atraso": 0.05,
+        "combinatorio": 0.09,
+        "localidade_numerologia": 0.15,
         "cenarios": 0.10,
         "contrarian": 0.07,
+        "transicao": 0.25,
         "nao_repeticao_exata": 0.05,
     },
 }
@@ -107,6 +126,7 @@ ABLATION_VARIANTS: List[Tuple[str, str | None]] = [
     ("sem_lua_local_numerologia", "localidade_numerologia"),
     ("sem_cenarios", "cenarios"),
     ("sem_contrarian", "contrarian"),
+    ("sem_transicao", "transicao"),
 ]
 
 
@@ -224,8 +244,13 @@ def _best_candidate(candidates: pd.DataFrame) -> pd.Series:
 def _has_default_exhaustive_candidates(existing_candidates: pd.DataFrame | None) -> bool:
     if existing_candidates is None or existing_candidates.empty:
         return False
-    required = {"nums", "score_final", "source_model", "score_contextual", "contexto_fase_lua"}
+    required = {"nums", "score_final", "source_model", "score_contextual", "contexto_fase_lua", "score_transicao"}
     if not required.issubset(existing_candidates.columns):
+        return False
+    if "total_combinacoes_avaliadas" not in existing_candidates.columns:
+        return False
+    max_evaluated = pd.to_numeric(existing_candidates["total_combinacoes_avaliadas"], errors="coerce").max()
+    if pd.isna(max_evaluated) or int(max_evaluated) < TOTAL_COMBINATIONS:
         return False
     return str(existing_candidates["source_model"].iloc[0]) == SOURCE_MODEL_EXAUSTIVO
 
@@ -288,6 +313,7 @@ def _candidate_rows_to_single_output(
         "score_localidade_numerologia",
         "score_cenarios",
         "score_contrarian",
+        "score_transicao",
         "source_model",
         "metodo",
         "aviso",
@@ -331,15 +357,16 @@ def build_single_prediction_report(
         "",
         "## Jogo unico selecionado",
         "",
-        f"- Jogo unico: {row['nums']} | score_final={float(row['score_final']):.6f}",
+        f"- Jogo unico: {row['nums']} | score_final={float(row['score_final']):.6f} | score_transicao={float(row.get('score_transicao', 0)):.6f}",
         "",
         "## O que esta camada faz",
         "",
-        "1. Mantem o score v3 existente como base.",
+        "1. Mantem o score exaustivo atual como base.",
         "2. Seleciona apenas o melhor jogo completo de 15 dezenas.",
         "3. Explicita o perfil de pesos usado.",
         "4. Mantem lua, numerologia, localidade, periodo do ano, dia da semana, historico, atrasos, combinacoes, cenarios e contrarian no score.",
-        "5. Nao divide a previsao entre dois jogos.",
+        "5. Adiciona transicao historica concurso a concurso: repetidas, entradas, saidas e mudanca estrutural.",
+        "6. Nao divide a previsao entre dois jogos.",
         "",
         f"Combinacoes possiveis avaliaveis da Lotofacil: {TOTAL_COMBINATIONS}.",
         f"Aviso: {AVISO_TECNICO}",
@@ -488,6 +515,7 @@ def _result_row(
         "score_localidade_numerologia": float(best.get("score_localidade_numerologia", 0.0)),
         "score_cenarios": float(best.get("score_cenarios", 0.0)),
         "score_contrarian": float(best.get("score_contrarian", 0.0)),
+        "score_transicao": float(best.get("score_transicao", 0.0)),
         "total_combinacoes_avaliadas": int(_summary_value(optimizer_summary, "combinacoes_avaliadas", 0) or 0),
         "combinacoes_possiveis": int(_summary_value(optimizer_summary, "combinacoes_possiveis", TOTAL_COMBINATIONS) or TOTAL_COMBINATIONS),
         "historico_concursos_usados": int(_summary_value(optimizer_summary, "historico_concursos_usados", 0) or 0),

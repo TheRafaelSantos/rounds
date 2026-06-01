@@ -8,7 +8,7 @@ from typing import Dict, List, Sequence, Tuple
 import pandas as pd
 
 from .context_features import TargetContext, build_target_context
-from .exhaustive_optimizer import TOTAL_COMBINATIONS, build_exhaustive_candidates
+from .exhaustive_optimizer import EXHAUSTIVE_SOURCE_MODEL, TOTAL_COMBINATIONS, build_exhaustive_candidates
 from .optimizer import build_optimized_candidates
 
 
@@ -29,7 +29,7 @@ class PredictionSummary:
     prediction_csv_path: str
     report_path: str
     excel_path: str
-    metodo: str = "ensemble_score_v3_exaustivo"
+    metodo: str = EXHAUSTIVE_SOURCE_MODEL
 
     def to_console(self) -> str:
         return "\n".join(
@@ -134,6 +134,7 @@ def build_prediction_report(
             f"- Jogo {int(row['jogo'])}: {row['nums']} | "
             f"score_final={float(row['score_final']):.6f} | "
             f"score_contextual={float(row.get('score_contextual', 0)):.6f} | "
+            f"score_transicao={float(row.get('score_transicao', 0)):.6f} | "
             f"metodo_origem={row.get('metodo', '-')}"
         )
     lines.extend(
@@ -148,8 +149,9 @@ def build_prediction_report(
             "5. score contextual: data do proximo concurso, dia da semana, periodo do ano, fase da lua, numerologia e localidade;",
             "6. score de cenarios: soma baixa/media/alta, sequencias, faixas historicas e visual forte permitido;",
             "7. score contrarian: protege dezenas que o score tradicional poderia excluir, como canto, centro e faixa alta;",
-            "8. varredura exaustiva das combinacoes possiveis;",
-            "9. diversidade minima entre os dois jogos.",
+            "8. score de transicao: compara cada concurso N com N+1 no historico e pontua repeticoes, entradas, saidas e estrutura de mudanca;",
+            "9. varredura exaustiva das combinacoes possiveis;",
+            "10. diversidade minima entre os dois jogos.",
             "",
             f"Combinacoes possiveis da Lotofacil: {TOTAL_COMBINATIONS}.",
             "Os dois jogos sao combinacoes completas de 15 dezenas. O sistema nao divide um palpite em metades entre sugestoes.",
@@ -190,12 +192,20 @@ def build_final_prediction(
     concurso_alvo = last_concurso + 1
     target_context = build_target_context(df, draw_hour=draw_hour, draw_minute=draw_minute)
 
-    source_model = "ensemble_score_v3_exaustivo" if engine == "exaustivo" else "ensemble_score_v2"
-    required_context_cols = {"score_contextual", "contexto_data_proximo_concurso", "contexto_fase_lua"}
+    source_model = EXHAUSTIVE_SOURCE_MODEL if engine == "exaustivo" else "ensemble_score_v2"
+    required_context_cols = {"score_contextual", "score_transicao", "contexto_data_proximo_concurso", "contexto_fase_lua"}
+    has_full_exhaustive_scan = True
+    if engine == "exaustivo":
+        if existing_candidates is not None and not existing_candidates.empty and "total_combinacoes_avaliadas" in existing_candidates.columns:
+            max_evaluated = pd.to_numeric(existing_candidates["total_combinacoes_avaliadas"], errors="coerce").max()
+            has_full_exhaustive_scan = bool(pd.notna(max_evaluated) and int(max_evaluated) >= TOTAL_COMBINATIONS)
+        else:
+            has_full_exhaustive_scan = False
     has_matching_engine = (
         existing_candidates is not None
         and not existing_candidates.empty
         and required_context_cols.issubset(existing_candidates.columns)
+        and has_full_exhaustive_scan
         and (
             (engine != "exaustivo" and "source_model" not in existing_candidates.columns)
             or str(existing_candidates["source_model"].iloc[0]) == source_model
