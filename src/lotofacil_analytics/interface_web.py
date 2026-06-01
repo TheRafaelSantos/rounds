@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
 
 from .config import AppConfig
+from .decision_layer_pipeline import DecisionLayerPipeline
 from .pipeline import LotofacilPipeline
 from .predictor_pipeline import PredictorPipeline
 
@@ -36,8 +37,10 @@ def _html_page() -> str:
   </header>
   <button onclick="status()">Status</button>
   <button onclick="updateBase()">Atualizar base</button>
+  <button onclick="predictSingle()">Gerar jogo unico</button>
   <button onclick="predict()">Gerar 2 jogos</button>
   <button onclick="window.location='/report'">Baixar relatorio</button>
+  <button onclick="window.location='/single-report'">Baixar relatorio jogo unico</button>
   <section class="games" id="games"></section>
   <pre id="output">Pronto.</pre>
   <script>
@@ -58,6 +61,14 @@ def _html_page() -> str:
       if (data.jogo_1) {
         games.innerHTML += '<div class="game"><strong>Jogo 1</strong><br>' + data.jogo_1 + '</div>';
         games.innerHTML += '<div class="game"><strong>Jogo 2</strong><br>' + data.jogo_2 + '</div>';
+      }
+    }
+    async function predictSingle() {
+      const data = await request('/api/predict-single', {method: 'POST'});
+      const games = document.getElementById('games');
+      games.innerHTML = '';
+      if (data.jogo_unico) {
+        games.innerHTML += '<div class="game"><strong>Jogo unico</strong><br>' + data.jogo_unico + '</div>';
       }
     }
   </script>
@@ -105,6 +116,19 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if self.path == "/single-report":
+                report_path = config.single_prediction_report_path
+                if not report_path.exists():
+                    _json_response(self, HTTPStatus.NOT_FOUND, {"error": "relatorio ainda nao gerado; use Gerar jogo unico primeiro"})
+                    return
+                body = report_path.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="lotofacil_prediction_single_report.md"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})
 
         def do_POST(self) -> None:
@@ -120,6 +144,20 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                     population=80,
                     max_overlap=8,
                     engine="exaustivo",
+                ).__dict__)
+                return
+            if self.path == "/api/predict-single":
+                self._handle_json(lambda: DecisionLayerPipeline(config=config, logger=logger).predict_single(
+                    seed=123,
+                    candidate_pool=10000,
+                    top_games=100,
+                    generations=20,
+                    population=80,
+                    draw_hour=20,
+                    draw_minute=0,
+                    engine="exaustivo",
+                    exhaustive_limit=None,
+                    weight_profile="padrao_atual",
                 ).__dict__)
                 return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})

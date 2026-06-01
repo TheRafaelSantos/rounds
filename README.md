@@ -18,8 +18,9 @@ Fases implementadas:
 8. **Fase 8 - Otimizacao heuristica de candidatos**.
 9. **Fase 9 - Geracao final de 2 jogos**.
 10. **Fase 10 - Interface local e build de executavel**.
+11. **Camada superior - jogo unico, validacao exaustiva, ablation test e ajuste de pesos**.
 
-Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos, backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio e motor exaustivo `ensemble_score_v3_exaustivo`.
+Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos, backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio, motor exaustivo `ensemble_score_v3_exaustivo` e camada de decisao acima do motor atual.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -177,6 +178,30 @@ Gerar os 2 jogos finais em modo completo, recalculando as fases antes da selecao
 python main.py --predict --mode completo
 ```
 
+Gerar 1 jogo unico pela camada superior de decisao:
+
+```powershell
+python main.py --predict-single --engine exaustivo --draw-hour 20 --draw-minute 0
+```
+
+Backtest walk-forward do jogo unico exaustivo:
+
+```powershell
+python main.py --backtest-exhaustive --validation-n-eval 3 --min-history 300 --draw-hour 20 --draw-minute 0
+```
+
+Teste de ablation, removendo uma familia de score por vez:
+
+```powershell
+python main.py --ablation-test --validation-n-eval 3 --min-history 300 --draw-hour 20 --draw-minute 0
+```
+
+Ajuste comparativo de perfis de pesos:
+
+```powershell
+python main.py --tune-weights --validation-n-eval 3 --min-history 300 --draw-hour 20 --draw-minute 0
+```
+
 Analisar um resultado real contra os jogos previstos:
 
 ```powershell
@@ -228,6 +253,14 @@ data/processed/lotofacil_ml_predictions.csv
 data/processed/lotofacil_ml_summary.csv
 data/processed/lotofacil_optimizer_candidates.csv
 data/processed/lotofacil_optimizer_summary.csv
+data/processed/lotofacil_prediction_single.csv
+data/processed/lotofacil_backtest_exaustivo_single.csv
+data/processed/lotofacil_backtest_exaustivo_single_summary.csv
+data/processed/lotofacil_ablation_test.csv
+data/processed/lotofacil_ablation_test_summary.csv
+data/processed/lotofacil_tune_weights_results.csv
+data/processed/lotofacil_tune_weights_summary.csv
+data/processed/lotofacil_tuned_weights.json
 data/processed/lotofacil_jogos_gerados.csv
 data/processed/lotofacil_prediction.csv
 data/processed/lotofacil_pos_sorteio_jogos_<rotulo>.csv
@@ -440,6 +473,40 @@ python main.py --predict --draw-hour 20 --draw-minute 0
 
 Os dois jogos gerados sao sempre jogos completos de 15 dezenas. O sistema nao divide uma previsao em metades entre sugestoes.
 
+## Camada superior de decisao
+
+Essa camada nao substitui as analises existentes. Ela fica por cima do motor `ensemble_score_v3_exaustivo` e usa os mesmos blocos: estatistica, historico, atrasos, combinacoes, lua, dia da semana, periodo do ano, numerologia, localidade, cenarios e contrarian.
+
+Comandos principais:
+
+1. `python main.py --predict-single`: escolhe apenas o jogo mais bem ranqueado, como um unico conjunto completo de 15 dezenas.
+2. `python main.py --backtest-exhaustive`: refaz a selecao jogo a jogo no passado, usando apenas concursos anteriores ao sorteio avaliado.
+3. `python main.py --ablation-test`: remove uma familia de score por vez para medir se ela melhorou ou piorou o historico testado.
+4. `python main.py --tune-weights`: compara perfis de pesos e salva o melhor perfil observado em `data/processed/lotofacil_tuned_weights.json`.
+
+Perfis de pesos aceitos em `--weight-profile`:
+
+1. `padrao_atual`;
+2. `contexto_forte`;
+3. `historico_forte`;
+4. `combinatorio_forte`;
+5. `contrarian_forte`;
+6. `estatistico_forte`;
+7. `cenarios_forte`;
+8. `atraso_forte`.
+
+Exemplo com perfil contextual mais forte:
+
+```powershell
+python main.py --predict-single --weight-profile contexto_forte --engine exaustivo --draw-hour 20 --draw-minute 0
+```
+
+Para testes rapidos de validacao tecnica, use `--exhaustive-limit`. Para varredura completa, omita esse parametro.
+
+```powershell
+python main.py --backtest-exhaustive --validation-n-eval 1 --min-history 300 --exhaustive-limit 50000
+```
+
 ## Analise pos-sorteio
 
 O comando `python main.py --analyze-result` compara um resultado real contra os jogos salvos em `data/processed/lotofacil_prediction.csv`.
@@ -502,12 +569,19 @@ O comando `python main.py --export` gera `data/exports/lotofacil_analytics_compl
 12. `backtest`;
 13. `backtest_score_final`;
 14. `backtest_score_final_resumo`;
-15. `jogos_gerados`;
-16. `pos_sorteio_jogos`;
-17. `pos_sorteio_dezenas`;
-18. `contexto_proximo_concurso`;
-19. `parametros`;
-20. `logs_execucao`.
+15. `jogo_unico`;
+16. `backtest_exaustivo`;
+17. `backtest_exaustivo_resumo`;
+18. `ablation_test`;
+19. `ablation_test_resumo`;
+20. `tune_weights`;
+21. `tune_weights_resumo`;
+22. `jogos_gerados`;
+23. `pos_sorteio_jogos`;
+24. `pos_sorteio_dezenas`;
+25. `contexto_proximo_concurso`;
+26. `parametros`;
+27. `logs_execucao`.
 
 ## Interface e executavel da Fase 10
 
@@ -522,6 +596,8 @@ Depois abra no navegador:
 ```text
 http://127.0.0.1:8765
 ```
+
+A tela local permite atualizar a base, gerar 2 jogos, gerar o jogo unico da camada superior e baixar os relatorios correspondentes.
 
 Build de executavel:
 

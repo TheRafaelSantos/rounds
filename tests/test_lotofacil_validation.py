@@ -10,7 +10,14 @@ from lotofacil_analytics.auditoria import build_auditoria
 from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
 from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_dezenas_long
-from lotofacil_analytics.exhaustive_optimizer import build_exhaustive_candidates
+from lotofacil_analytics.decision_layer import (
+    build_single_prediction,
+    run_ablation_test,
+    run_exhaustive_single_backtest,
+    run_weight_tuning,
+    weights_for_profile,
+)
+from lotofacil_analytics.exhaustive_optimizer import build_exhaustive_candidates, resolve_exhaustive_weights
 from lotofacil_analytics.features_base import build_base_features
 from lotofacil_analytics.games import generate_games
 from lotofacil_analytics.interface_web import _html_page
@@ -288,18 +295,97 @@ class LotofacilValidationTest(unittest.TestCase):
             pd.DataFrame(rows),
             top_games=5,
             limit_combinations=200,
+            weights={"localidade_numerologia": 0.30, "estatistico": 0.10},
         )
 
         self.assertEqual(len(candidates), 5)
         self.assertEqual(set(candidates["source_model"]), {"ensemble_score_v3_exaustivo"})
         self.assertIn("score_localidade_numerologia", candidates.columns)
         self.assertIn("contexto_cidade_sorteio", candidates.columns)
+        self.assertIn("score_weights", set(summary["metrica"]))
         self.assertEqual(int(summary[summary["metrica"] == "combinacoes_avaliadas"]["valor"].iloc[0]), 200)
         for nums_text in candidates["nums"].tolist():
             nums = [int(part) for part in nums_text.split()]
             self.assertEqual(len(nums), 15)
             self.assertEqual(len(set(nums)), 15)
             self.assertTrue(all(1 <= n <= 25 for n in nums))
+
+    def test_resolve_exhaustive_weights_normalizes_custom_weights(self) -> None:
+        weights = resolve_exhaustive_weights({"estatistico": 2.0, "historico": 1.0})
+
+        self.assertAlmostEqual(sum(weights.values()), 1.0, places=6)
+        self.assertGreater(weights["estatistico"], weights["historico"])
+
+    def test_decision_layer_generates_single_prediction(self) -> None:
+        rows = []
+        for idx in range(1, 14):
+            rows.append(normalize_contest(payload_with_dezenas(idx, cyclic_dezenas(idx))))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            summary = build_single_prediction(
+                pd.DataFrame(rows),
+                existing_candidates=None,
+                seed=123,
+                candidate_pool=100,
+                top_games=5,
+                generations=1,
+                population=8,
+                draw_hour=20,
+                draw_minute=0,
+                engine="exaustivo",
+                exhaustive_limit=200,
+                weight_profile="padrao_atual",
+                prediction_csv_path=base / "single.csv",
+                report_path=base / "single.md",
+                excel_path=base / "single.xlsx",
+            )
+
+            self.assertTrue((base / "single.csv").exists())
+            self.assertTrue((base / "single.md").exists())
+            self.assertTrue((base / "single.xlsx").exists())
+            self.assertEqual(len(parse_numbers(summary.jogo_unico)), 15)
+
+    def test_exhaustive_single_backtest_ablation_and_tuning(self) -> None:
+        rows = []
+        for idx in range(1, 14):
+            rows.append(normalize_contest(payload_with_dezenas(idx, cyclic_dezenas(idx))))
+        concursos = pd.DataFrame(rows)
+
+        results, summary = run_exhaustive_single_backtest(
+            concursos,
+            n_eval=2,
+            min_history=10,
+            top_games=5,
+            exhaustive_limit=120,
+            weight_profile="padrao_atual",
+        )
+        self.assertEqual(int(results["concurso_previsto"].nunique()), 2)
+        self.assertEqual(len(summary), 1)
+        self.assertIn("media_acertos_jogo_unico", summary.columns)
+
+        ablation_results, ablation_summary = run_ablation_test(
+            concursos,
+            n_eval=1,
+            min_history=10,
+            top_games=5,
+            exhaustive_limit=80,
+        )
+        self.assertIn("completo", set(ablation_results["weight_profile"]))
+        self.assertIn("delta_media_vs_completo", ablation_summary.columns)
+
+        tuning_results, tuning_summary, best_payload = run_weight_tuning(
+            concursos,
+            n_eval=1,
+            min_history=10,
+            top_games=5,
+            exhaustive_limit=80,
+            profiles=["padrao_atual", "contexto_forte"],
+        )
+        self.assertEqual(set(tuning_results["weight_profile"]), {"padrao_atual", "contexto_forte"})
+        self.assertIn("ranking_profile", tuning_summary.columns)
+        self.assertIn(best_payload["best_profile"], {"padrao_atual", "contexto_forte"})
+        self.assertAlmostEqual(sum(weights_for_profile(best_payload["best_profile"]).values()), 1.0, places=6)
 
     def test_select_final_games_returns_two_distinct_games(self) -> None:
         candidates = pd.DataFrame(
@@ -320,6 +406,7 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("Lotofacil Analytics", html)
         self.assertIn("/api/status", html)
         self.assertIn("/api/predict", html)
+        self.assertIn("/api/predict-single", html)
         self.assertIn("/report", html)
 
     def test_generate_games_balanceado_returns_requested_quantity(self) -> None:

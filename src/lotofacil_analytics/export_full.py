@@ -165,6 +165,10 @@ def _parametros(config: AppConfig) -> pd.DataFrame:
             {"parametro": "comando_predict", "valor": "python main.py --predict"},
             {"parametro": "comando_predict_exaustivo", "valor": "python main.py --predict --engine exaustivo --draw-hour 20 --draw-minute 0"},
             {"parametro": "comando_predict_completo", "valor": "python main.py --predict --mode completo"},
+            {"parametro": "comando_predict_single", "valor": "python main.py --predict-single --engine exaustivo --draw-hour 20 --draw-minute 0"},
+            {"parametro": "comando_backtest_exhaustive", "valor": "python main.py --backtest-exhaustive --validation-n-eval 3 --min-history 300"},
+            {"parametro": "comando_ablation_test", "valor": "python main.py --ablation-test --validation-n-eval 3 --min-history 300"},
+            {"parametro": "comando_tune_weights", "valor": "python main.py --tune-weights --validation-n-eval 3 --min-history 300"},
             {"parametro": "comando_analyze_result", "valor": "python main.py --analyze-result --result-label exemplo --actual-numbers \"01 02 03 04 05 06 07 08 09 10 11 12 13 14 15\""},
             {"parametro": "comando_final_backtest", "valor": "python main.py --final-backtest"},
             {"parametro": "comando_serve", "valor": "python main.py --serve"},
@@ -199,10 +203,17 @@ def export_full_workbook(config: AppConfig, logger: logging.Logger) -> ExportSum
     backtest = _read_csv(config.backtest_csv_path)
     generated_games = _read_csv(config.generated_games_csv_path)
     prediction = _read_csv(config.prediction_csv_path)
+    single_prediction = _read_csv(config.single_prediction_csv_path)
     post_result_games = _read_csv_many(config.processed_dir, "lotofacil_pos_sorteio_jogos*.csv")
     post_result_dezenas = _read_csv_many(config.processed_dir, "lotofacil_pos_sorteio_dezenas*.csv")
     final_backtest = _read_csv(config.final_backtest_csv_path)
     final_backtest_summary = _read_csv(config.final_backtest_summary_csv_path)
+    exhaustive_backtest = _read_csv(config.exhaustive_backtest_csv_path)
+    exhaustive_backtest_summary = _read_csv(config.exhaustive_backtest_summary_csv_path)
+    ablation = _read_csv(config.ablation_csv_path)
+    ablation_summary = _read_csv(config.ablation_summary_csv_path)
+    tune_weights = _read_csv(config.tune_weights_csv_path)
+    tune_weights_summary = _read_csv(config.tune_weights_summary_csv_path)
     jogos_gerados = generated_games if not generated_games.empty else prediction
 
     sheets: Dict[str, pd.DataFrame] = {
@@ -220,6 +231,13 @@ def export_full_workbook(config: AppConfig, logger: logging.Logger) -> ExportSum
         "backtest": backtest if not backtest.empty else _empty_sheet("Backtest nao encontrado. Rode python main.py --backtest."),
         "backtest_score_final": final_backtest if not final_backtest.empty else _empty_sheet("Backtest score final nao encontrado. Rode python main.py --final-backtest."),
         "backtest_score_final_resumo": final_backtest_summary if not final_backtest_summary.empty else _empty_sheet("Resumo do backtest score final nao encontrado. Rode python main.py --final-backtest."),
+        "jogo_unico": single_prediction if not single_prediction.empty else _empty_sheet("Jogo unico nao encontrado. Rode python main.py --predict-single."),
+        "backtest_exaustivo": exhaustive_backtest if not exhaustive_backtest.empty else _empty_sheet("Backtest exaustivo nao encontrado. Rode python main.py --backtest-exhaustive."),
+        "backtest_exaustivo_resumo": exhaustive_backtest_summary if not exhaustive_backtest_summary.empty else _empty_sheet("Resumo do backtest exaustivo nao encontrado. Rode python main.py --backtest-exhaustive."),
+        "ablation_test": ablation if not ablation.empty else _empty_sheet("Ablation test nao encontrado. Rode python main.py --ablation-test."),
+        "ablation_test_resumo": ablation_summary if not ablation_summary.empty else _empty_sheet("Resumo do ablation test nao encontrado. Rode python main.py --ablation-test."),
+        "tune_weights": tune_weights if not tune_weights.empty else _empty_sheet("Tune weights nao encontrado. Rode python main.py --tune-weights."),
+        "tune_weights_resumo": tune_weights_summary if not tune_weights_summary.empty else _empty_sheet("Resumo do tune weights nao encontrado. Rode python main.py --tune-weights."),
         "jogos_gerados": jogos_gerados if not jogos_gerados.empty else _empty_sheet("Jogos nao encontrados. Rode python main.py --generate-games ou --predict."),
         "pos_sorteio_jogos": post_result_games if not post_result_games.empty else _empty_sheet("Analise pos-sorteio nao encontrada. Rode python main.py --analyze-result."),
         "pos_sorteio_dezenas": post_result_dezenas if not post_result_dezenas.empty else _empty_sheet("Auditoria de dezenas pos-sorteio nao encontrada. Rode python main.py --analyze-result."),
@@ -229,10 +247,14 @@ def export_full_workbook(config: AppConfig, logger: logging.Logger) -> ExportSum
     }
 
     config.full_export_excel_path.parent.mkdir(parents=True, exist_ok=True)
-    with pd.ExcelWriter(config.full_export_excel_path, engine="openpyxl") as writer:
+    temp_path = config.full_export_excel_path.with_name(f"{config.full_export_excel_path.stem}.tmp{config.full_export_excel_path.suffix}")
+    if temp_path.exists():
+        temp_path.unlink()
+    with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
         for sheet_name, df in sheets.items():
             safe_df = sanitize_dataframe_for_tabular_output(df)
             safe_df.to_excel(writer, index=False, sheet_name=sheet_name)
+    temp_path.replace(config.full_export_excel_path)
 
     logger.info("Excel consolidado salvo em %s", config.full_export_excel_path)
     return ExportSummary(excel_path=str(config.full_export_excel_path), sheets=list(sheets.keys()))

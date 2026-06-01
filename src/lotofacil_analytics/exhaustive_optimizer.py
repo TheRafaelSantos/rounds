@@ -4,7 +4,7 @@ import heapq
 import math
 from collections import Counter
 from itertools import combinations
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Mapping, Sequence, Tuple
 
 import pandas as pd
 
@@ -32,6 +32,56 @@ OMITTED_SIZE = MAX_DEZENA - PICK_SIZE
 PAIR_COUNT = math.comb(PICK_SIZE, 2)
 FULL_SUM = sum(NUMBERS)
 FULL_EVEN_COUNT = sum(1 for n in NUMBERS if n % 2 == 0)
+DEFAULT_EXHAUSTIVE_WEIGHTS: Dict[str, float] = {
+    "estatistico": 0.20,
+    "historico": 0.13,
+    "atraso": 0.07,
+    "combinatorio": 0.12,
+    "localidade_numerologia": 0.20,
+    "cenarios": 0.13,
+    "contrarian": 0.10,
+    "nao_repeticao_exata": 0.05,
+}
+WEIGHT_ALIASES = {
+    "contextual": "localidade_numerologia",
+    "lua_local_numerologia": "localidade_numerologia",
+    "localidade_numerologia_lua_contexto": "localidade_numerologia",
+}
+
+
+def resolve_exhaustive_weights(weights: Mapping[str, float] | None = None) -> Dict[str, float]:
+    resolved = dict(DEFAULT_EXHAUSTIVE_WEIGHTS)
+    for key, value in (weights or {}).items():
+        normalized_key = WEIGHT_ALIASES.get(str(key), str(key))
+        if normalized_key not in resolved:
+            valid = ", ".join(sorted(resolved))
+            raise ValueError(f"Peso desconhecido: {key}. Pesos validos: {valid}.")
+        numeric_value = float(value)
+        if numeric_value < 0:
+            raise ValueError(f"Peso nao pode ser negativo: {key}={value}.")
+        resolved[normalized_key] = numeric_value
+
+    total = sum(float(value) for value in resolved.values())
+    if total <= 0:
+        raise ValueError("A soma dos pesos do score exaustivo precisa ser maior que zero.")
+    return {key: round(float(value) / total, 10) for key, value in resolved.items()}
+
+
+def format_exhaustive_weights(weights: Mapping[str, float]) -> str:
+    ordered = [
+        "estatistico",
+        "historico",
+        "atraso",
+        "combinatorio",
+        "localidade_numerologia",
+        "cenarios",
+        "contrarian",
+        "nao_repeticao_exata",
+    ]
+    labels = {
+        "localidade_numerologia": "localidade_numerologia_lua_contexto",
+    }
+    return ";".join(f"{labels.get(key, key)}={float(weights[key]):.4f}" for key in ordered)
 
 
 def _nums_from_row(row: pd.Series) -> List[int]:
@@ -208,10 +258,12 @@ def build_exhaustive_candidates(
     draw_hour: int = 20,
     draw_minute: int = 0,
     limit_combinations: int | None = None,
+    weights: Mapping[str, float] | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if concursos.empty:
         raise ValueError("Base de concursos vazia. Rode primeiro: python main.py --update")
 
+    resolved_weights = resolve_exhaustive_weights(weights)
     df = concursos.copy().sort_values("concurso").reset_index(drop=True)
     draws = [_nums_from_row(row) for _, row in df.iterrows()]
     profile = _historical_profile(draws)
@@ -307,14 +359,14 @@ def build_exhaustive_candidates(
         score_localidade_numerologia = score_contextual
 
         score_final = round(
-            0.20 * score_estatistico
-            + 0.13 * score_historico
-            + 0.07 * score_atraso
-            + 0.12 * score_combinatorio
-            + 0.20 * score_localidade_numerologia
-            + 0.13 * score_cenarios
-            + 0.10 * score_contrarian
-            + 0.05 * (100.0 if not exact_historical else 92.0),
+            resolved_weights["estatistico"] * score_estatistico
+            + resolved_weights["historico"] * score_historico
+            + resolved_weights["atraso"] * score_atraso
+            + resolved_weights["combinatorio"] * score_combinatorio
+            + resolved_weights["localidade_numerologia"] * score_localidade_numerologia
+            + resolved_weights["cenarios"] * score_cenarios
+            + resolved_weights["contrarian"] * score_contrarian
+            + resolved_weights["nao_repeticao_exata"] * (100.0 if not exact_historical else 92.0),
             6,
         )
 
@@ -357,6 +409,7 @@ def build_exhaustive_candidates(
 
     candidates = _ranked_heap_rows(heap)
     if not candidates.empty:
+        candidates["total_combinacoes_avaliadas"] = int(evaluated)
         detail_rows = []
         for _, row in candidates.iterrows():
             nums = [int(part) for part in str(row["nums"]).split()]
@@ -394,7 +447,7 @@ def build_exhaustive_candidates(
             {"metrica": "uf_sorteio_assumida", "valor": context_model.target.uf_sorteio_assumida},
             {"metrica": "bairro_sorteio_assumido", "valor": context_model.target.bairro_sorteio_assumido or "indisponivel_na_base"},
             {"metrica": "observacao_localidade", "valor": context_model.target.observacao_localidade},
-            {"metrica": "score_weights", "valor": "estatistico=0.20;historico=0.13;atraso=0.07;combinatorio=0.12;localidade_numerologia_lua_contexto=0.20;cenarios=0.13;contrarian=0.10;nao_repeticao_exata=0.05"},
+            {"metrica": "score_weights", "valor": format_exhaustive_weights(resolved_weights)},
         ]
     )
     return candidates, summary

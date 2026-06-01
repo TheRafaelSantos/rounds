@@ -16,6 +16,8 @@ from lotofacil_analytics.build_executable import build_executable
 from lotofacil_analytics.backtest_pipeline import BacktestPipeline
 from lotofacil_analytics.combinacoes_pipeline import CombinacoesPipeline
 from lotofacil_analytics.dezenas_pipeline import DezenasPipeline
+from lotofacil_analytics.decision_layer import WEIGHT_PROFILE_PRESETS
+from lotofacil_analytics.decision_layer_pipeline import DecisionLayerPipeline
 from lotofacil_analytics.export_full import export_full_workbook
 from lotofacil_analytics.final_backtest_pipeline import FinalBacktestPipeline
 from lotofacil_analytics.features_pipeline import FeaturePipeline
@@ -58,6 +60,10 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--ml", action="store_true", help="Executa ML temporal leve da Fase 7.")
     mode.add_argument("--optimize", action="store_true", help="Gera candidatos otimizados da Fase 8.")
     mode.add_argument("--predict", action="store_true", help="Gera exatamente 2 jogos finais da Fase 9.")
+    mode.add_argument("--predict-single", action="store_true", help="Gera 1 jogo unico pela camada superior de decisao.")
+    mode.add_argument("--backtest-exhaustive", action="store_true", help="Backtest walk-forward do jogo unico exaustivo.")
+    mode.add_argument("--ablation-test", action="store_true", help="Mede impacto de remover familias de score do motor exaustivo.")
+    mode.add_argument("--tune-weights", action="store_true", help="Testa perfis de pesos e salva o melhor perfil observado.")
     mode.add_argument("--analyze-result", action="store_true", help="Analisa resultado real contra os jogos previstos.")
     mode.add_argument("--final-backtest", action="store_true", help="Executa backtest do score final completo contra aleatorio.")
     mode.add_argument("--export", action="store_true", help="Gera Excel consolidado com as abas do briefing.")
@@ -90,6 +96,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=["rapido", "completo", "experimental"], default="rapido", help="Modo do --predict.")
     parser.add_argument("--engine", choices=["exaustivo", "heuristico"], default="exaustivo", help="Motor de score para --optimize e --predict.")
     parser.add_argument("--exhaustive-limit", type=int, default=None, help="Limite tecnico para testar o motor exaustivo; omitido avalia todas as combinacoes.")
+    parser.add_argument("--weight-profile", choices=sorted(WEIGHT_PROFILE_PRESETS), default="padrao_atual", help="Perfil de pesos da camada superior.")
+    parser.add_argument("--validation-n-eval", type=int, default=3, help="Concursos finais avaliados nos comandos de validacao da camada superior.")
     parser.add_argument("--method", default="balanceado_basico", help="Metodo do --generate-games.")
     parser.add_argument("--qty", type=int, default=10, help="Quantidade de jogos do --generate-games.")
     parser.add_argument("--draw-hour", type=int, default=20, help="Hora de Brasilia usada para contexto lunar do proximo sorteio.")
@@ -125,6 +133,10 @@ def main() -> int:
         or args.ml
         or args.optimize
         or args.predict
+        or args.predict_single
+        or args.backtest_exhaustive
+        or args.ablation_test
+        or args.tune_weights
         or args.analyze_result
         or args.final_backtest
         or args.export
@@ -193,6 +205,47 @@ def main() -> int:
                 population=args.population,
                 draw_hour=args.draw_hour,
                 draw_minute=args.draw_minute,
+            )
+        elif args.predict_single:
+            summary = DecisionLayerPipeline(config=config, logger=logger).predict_single(
+                seed=args.seed,
+                candidate_pool=args.candidate_pool,
+                top_games=args.top_games,
+                generations=args.generations,
+                population=args.population,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+                engine=args.engine,
+                exhaustive_limit=args.exhaustive_limit,
+                weight_profile=args.weight_profile,
+            )
+        elif args.backtest_exhaustive:
+            summary = DecisionLayerPipeline(config=config, logger=logger).backtest_exhaustive(
+                n_eval=args.validation_n_eval,
+                min_history=args.min_history,
+                top_games=args.top_games,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+                exhaustive_limit=args.exhaustive_limit,
+                weight_profile=args.weight_profile,
+            )
+        elif args.ablation_test:
+            summary = DecisionLayerPipeline(config=config, logger=logger).ablation_test(
+                n_eval=args.validation_n_eval,
+                min_history=args.min_history,
+                top_games=args.top_games,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+                exhaustive_limit=args.exhaustive_limit,
+            )
+        elif args.tune_weights:
+            summary = DecisionLayerPipeline(config=config, logger=logger).tune_weights(
+                n_eval=args.validation_n_eval,
+                min_history=args.min_history,
+                top_games=args.top_games,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+                exhaustive_limit=args.exhaustive_limit,
             )
         elif args.predict:
             if args.mode == "completo":

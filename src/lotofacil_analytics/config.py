@@ -163,6 +163,18 @@ class AppConfig:
         return self.exports_dir / "lotofacil_prediction.xlsx"
 
     @property
+    def single_prediction_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_prediction_single.csv"
+
+    @property
+    def single_prediction_report_path(self) -> Path:
+        return self.exports_dir / "lotofacil_prediction_single_report.md"
+
+    @property
+    def single_prediction_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_prediction_single.xlsx"
+
+    @property
     def generated_games_csv_path(self) -> Path:
         return self.processed_dir / "lotofacil_jogos_gerados.csv"
 
@@ -201,3 +213,43 @@ class AppConfig:
     @property
     def final_backtest_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_backtest_final_score.xlsx"
+
+    @property
+    def exhaustive_backtest_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_backtest_exaustivo_single.csv"
+
+    @property
+    def exhaustive_backtest_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_backtest_exaustivo_single_summary.csv"
+
+    @property
+    def exhaustive_backtest_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_backtest_exaustivo_single.xlsx"
+
+    @property
+    def ablation_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_ablation_test.csv"
+
+    @property
+    def ablation_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_ablation_test_summary.csv"
+
+    @property
+    def ablation_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_ablation_test.xlsx"
+
+    @property
+    def tune_weights_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_tune_weights_results.csv"
+
+    @property
+    def tune_weights_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_tune_weights_summary.csv"
+
+    @property
+    def tune_weights_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_tune_weights.xlsx"
+
+    @property
+    def tuned_weights_json_path(self) -> Path:
+        return self.processed_dir / "lotofacil_tuned_weights.json"
