@@ -17,7 +17,7 @@ from .backtest_lotofacil import (
     nums_from_row,
 )
 from .context_features import build_context_model
-from .optimizer import build_optimized_candidates, score_candidate
+from .optimizer import _common_range_signatures, _historical_profile, build_optimized_candidates, score_candidate
 
 
 SUPPORTED_GAME_METHODS = {
@@ -77,14 +77,8 @@ def _candidate_score_row(nums: Sequence[int], concursos: pd.DataFrame, *, draw_h
     from itertools import combinations
 
     draws = [nums_from_row(row) for _, row in concursos.copy().sort_values("concurso").iterrows()]
-    sums = [sum(draw) for draw in draws]
-    pairs = [sum(1 for n in draw if n % 2 == 0) for draw in draws]
-    overlaps = [len(set(draws[idx]) & set(draws[idx - 1])) for idx in range(1, len(draws))]
-    profile = {
-        "median_sum": float(pd.Series(sums).median()),
-        "median_pairs": float(pd.Series(pairs).median()),
-        "median_overlap": float(pd.Series(overlaps).median()) if overlaps else 9.0,
-    }
+    profile = _historical_profile(draws)
+    common_signatures = _common_range_signatures(draws)
     freq_recent: Counter[int] = Counter()
     for draw in draws[-100:]:
         freq_recent.update(draw)
@@ -92,7 +86,15 @@ def _candidate_score_row(nums: Sequence[int], concursos: pd.DataFrame, *, draw_h
     for draw in draws:
         pair_freq.update(tuple(combo) for combo in combinations(sorted(draw), 2))
     context_model = build_context_model(concursos, draw_hour=draw_hour, draw_minute=draw_minute)
-    return score_candidate(nums, profile=profile, last_draw=draws[-1], freq_recent=freq_recent, pair_freq=pair_freq, context_model=context_model)
+    return score_candidate(
+        nums,
+        profile=profile,
+        last_draw=draws[-1],
+        freq_recent=freq_recent,
+        pair_freq=pair_freq,
+        context_model=context_model,
+        common_signatures=common_signatures,
+    )
 
 
 def generate_games(

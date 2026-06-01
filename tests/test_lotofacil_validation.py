@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 import pandas as pd
 
@@ -11,8 +13,10 @@ from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_d
 from lotofacil_analytics.features_base import build_base_features
 from lotofacil_analytics.games import generate_games
 from lotofacil_analytics.interface_web import _html_page
+from lotofacil_analytics.final_backtest import run_final_score_backtest
 from lotofacil_analytics.ml_temporal import run_ml_temporal
 from lotofacil_analytics.optimizer import build_optimized_candidates, score_candidate
+from lotofacil_analytics.post_result_analysis import analyze_post_result, parse_numbers
 from lotofacil_analytics.predictor import select_final_games
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.validators import DataValidationError, validate_contest_record, validate_dataset
@@ -45,6 +49,11 @@ def payload_with_dezenas(numero: int, dezenas: list[str]) -> dict:
     payload["listaDezenas"] = list(dezenas)
     payload["dezenasSorteadasOrdemSorteio"] = list(dezenas)
     return payload
+
+
+def cyclic_dezenas(offset: int) -> list[str]:
+    nums = [((offset + idx - 1) % 25) + 1 for idx in range(15)]
+    return [f"{n:02d}" for n in sorted(nums)]
 
 
 class LotofacilValidationTest(unittest.TestCase):
@@ -151,6 +160,42 @@ class LotofacilValidationTest(unittest.TestCase):
     def test_compute_hits(self) -> None:
         self.assertEqual(compute_hits([1, 2, 3], [3, 4, 5]), 1)
         self.assertEqual(compute_hits([1, 2, 3], [4, 5, 6]), 0)
+
+    def test_parse_numbers_accepts_common_separators(self) -> None:
+        nums = parse_numbers("01 - 02 - 03, 04 05 06 07 08 09 10 11 12 13 14 15")
+
+        self.assertEqual(nums, list(range(1, 16)))
+
+    def test_analyze_post_result_writes_expected_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            predictions_path = base / "prediction.csv"
+            predictions = pd.DataFrame(
+                [
+                    {"jogo": 1, "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15", "score_final": 99.0},
+                    {"jogo": 2, "nums": "11 12 13 14 15 16 17 18 19 20 21 22 23 24 25", "score_final": 90.0},
+                ]
+            )
+            predictions.to_csv(predictions_path, index=False, encoding="utf-8-sig")
+
+            summary = analyze_post_result(
+                actual_numbers="01 - 02 - 03 - 04 - 05 - 06 - 07 - 08 - 09 - 10 - 11 - 12 - 13 - 14 - 15",
+                predictions_path=predictions_path,
+                optimizer_candidates_path=base / "missing_optimizer.csv",
+                games_csv_path=base / "jogos.csv",
+                dezenas_csv_path=base / "dezenas.csv",
+                report_path=base / "report.md",
+                excel_path=base / "analise.xlsx",
+                label="teste",
+                concurso=999,
+            )
+
+            self.assertEqual(summary.best_hits, 15)
+            self.assertEqual(summary.union_hits, 15)
+            self.assertTrue((base / "jogos.csv").exists())
+            self.assertTrue((base / "dezenas.csv").exists())
+            self.assertTrue((base / "report.md").exists())
+            self.assertTrue((base / "analise.xlsx").exists())
 
     def test_run_backtest_returns_all_methods(self) -> None:
         rows = [
@@ -276,6 +321,28 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertEqual(len(nums), 15)
             self.assertEqual(len(set(nums)), 15)
             self.assertTrue(all(1 <= n <= 25 for n in nums))
+
+    def test_final_score_backtest_compares_model_with_random_baseline(self) -> None:
+        rows = []
+        for idx in range(1, 14):
+            rows.append(normalize_contest(payload_with_dezenas(idx, cyclic_dezenas(idx))))
+
+        results, summary = run_final_score_backtest(
+            pd.DataFrame(rows),
+            n_eval=2,
+            min_history=10,
+            seed=123,
+            candidate_pool=80,
+            top_games=10,
+            generations=1,
+            population=8,
+            max_overlap=10,
+        )
+
+        self.assertEqual(int(results["concurso_previsto"].nunique()), 2)
+        self.assertEqual(set(results["modelo_nome"]), {"ensemble_score_v2", "baseline_2_jogos_aleatorios"})
+        self.assertEqual(set(summary["modelo_nome"]), set(results["modelo_nome"]))
+        self.assertTrue((results["melhor_acerto_entre_2"] >= 0).all())
 
 
 if __name__ == "__main__":

@@ -173,3 +173,31 @@ class AppConfig:
     @property
     def full_export_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_analytics_completo.xlsx"
+
+    @property
+    def post_result_games_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_pos_sorteio_jogos.csv"
+
+    @property
+    def post_result_dezenas_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_pos_sorteio_dezenas.csv"
+
+    @property
+    def post_result_report_path(self) -> Path:
+        return self.exports_dir / "lotofacil_pos_sorteio_report.md"
+
+    @property
+    def post_result_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_pos_sorteio.xlsx"
+
+    @property
+    def final_backtest_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_backtest_final_score.csv"
+
+    @property
+    def final_backtest_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_backtest_final_score_summary.csv"
+
+    @property
+    def final_backtest_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_backtest_final_score.xlsx"

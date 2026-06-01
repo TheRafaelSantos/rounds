@@ -38,6 +38,18 @@ def _read_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, encoding="utf-8-sig")
 
 
+def _read_csv_many(directory: Path, pattern: str) -> pd.DataFrame:
+    frames: List[pd.DataFrame] = []
+    for path in sorted(directory.glob(pattern)):
+        df = _read_csv(path)
+        if df.empty:
+            continue
+        df = df.copy()
+        df.insert(0, "arquivo_origem", path.name)
+        frames.append(df)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
 def _empty_sheet(message: str) -> pd.DataFrame:
     return pd.DataFrame([{"observacao": message}])
 
@@ -151,6 +163,8 @@ def _parametros(config: AppConfig) -> pd.DataFrame:
             {"parametro": "comando_generate_games", "valor": "python main.py --generate-games --method balanceado_basico --qty 10"},
             {"parametro": "comando_predict", "valor": "python main.py --predict"},
             {"parametro": "comando_predict_completo", "valor": "python main.py --predict --mode completo"},
+            {"parametro": "comando_analyze_result", "valor": "python main.py --analyze-result --result-label exemplo --actual-numbers \"01 02 03 04 05 06 07 08 09 10 11 12 13 14 15\""},
+            {"parametro": "comando_final_backtest", "valor": "python main.py --final-backtest"},
             {"parametro": "comando_serve", "valor": "python main.py --serve"},
             {"parametro": "comando_build_exe", "valor": "python main.py --build-exe"},
         ]
@@ -183,6 +197,10 @@ def export_full_workbook(config: AppConfig, logger: logging.Logger) -> ExportSum
     backtest = _read_csv(config.backtest_csv_path)
     generated_games = _read_csv(config.generated_games_csv_path)
     prediction = _read_csv(config.prediction_csv_path)
+    post_result_games = _read_csv_many(config.processed_dir, "lotofacil_pos_sorteio_jogos*.csv")
+    post_result_dezenas = _read_csv_many(config.processed_dir, "lotofacil_pos_sorteio_dezenas*.csv")
+    final_backtest = _read_csv(config.final_backtest_csv_path)
+    final_backtest_summary = _read_csv(config.final_backtest_summary_csv_path)
     jogos_gerados = generated_games if not generated_games.empty else prediction
 
     sheets: Dict[str, pd.DataFrame] = {
@@ -198,7 +216,11 @@ def export_full_workbook(config: AppConfig, logger: logging.Logger) -> ExportSum
         "quartetos": quartetos if not quartetos.empty else _empty_sheet("Quartetos nao encontrados. Rode python main.py --combinacoes."),
         "rankings": _rankings(dezenas_historico),
         "backtest": backtest if not backtest.empty else _empty_sheet("Backtest nao encontrado. Rode python main.py --backtest."),
+        "backtest_score_final": final_backtest if not final_backtest.empty else _empty_sheet("Backtest score final nao encontrado. Rode python main.py --final-backtest."),
+        "backtest_score_final_resumo": final_backtest_summary if not final_backtest_summary.empty else _empty_sheet("Resumo do backtest score final nao encontrado. Rode python main.py --final-backtest."),
         "jogos_gerados": jogos_gerados if not jogos_gerados.empty else _empty_sheet("Jogos nao encontrados. Rode python main.py --generate-games ou --predict."),
+        "pos_sorteio_jogos": post_result_games if not post_result_games.empty else _empty_sheet("Analise pos-sorteio nao encontrada. Rode python main.py --analyze-result."),
+        "pos_sorteio_dezenas": post_result_dezenas if not post_result_dezenas.empty else _empty_sheet("Auditoria de dezenas pos-sorteio nao encontrada. Rode python main.py --analyze-result."),
         "contexto_proximo_concurso": _contexto_proximo_concurso(concursos),
         "parametros": _parametros(config),
         "logs_execucao": _logs_execucao(config),

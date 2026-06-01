@@ -17,14 +17,29 @@ from lotofacil_analytics.backtest_pipeline import BacktestPipeline
 from lotofacil_analytics.combinacoes_pipeline import CombinacoesPipeline
 from lotofacil_analytics.dezenas_pipeline import DezenasPipeline
 from lotofacil_analytics.export_full import export_full_workbook
+from lotofacil_analytics.final_backtest_pipeline import FinalBacktestPipeline
 from lotofacil_analytics.features_pipeline import FeaturePipeline
 from lotofacil_analytics.games_pipeline import GeneratedGamesPipeline
 from lotofacil_analytics.logger import setup_logger
 from lotofacil_analytics.ml_pipeline import MLPipeline
 from lotofacil_analytics.optimizer_pipeline import OptimizerPipeline
 from lotofacil_analytics.pipeline import LotofacilPipeline
+from lotofacil_analytics.post_result_analysis import analyze_post_result
 from lotofacil_analytics.predictor_pipeline import PredictorPipeline
 from lotofacil_analytics.interface_web import run_web_server
+
+
+def _safe_file_label(label: str) -> str:
+    safe = "".join(
+        ch if ch.isascii() and (ch.isalnum() or ch in {"-", "_"}) else "_"
+        for ch in str(label).strip()
+    ).strip("_")
+    return safe or "resultado"
+
+
+def _path_with_label(path: Path, label: str) -> Path:
+    safe = _safe_file_label(label)
+    return path.with_name(f"{path.stem}_{safe}{path.suffix}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,6 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--ml", action="store_true", help="Executa ML temporal leve da Fase 7.")
     mode.add_argument("--optimize", action="store_true", help="Gera candidatos otimizados da Fase 8.")
     mode.add_argument("--predict", action="store_true", help="Gera exatamente 2 jogos finais da Fase 9.")
+    mode.add_argument("--analyze-result", action="store_true", help="Analisa resultado real contra os jogos previstos.")
+    mode.add_argument("--final-backtest", action="store_true", help="Executa backtest do score final completo contra aleatorio.")
     mode.add_argument("--export", action="store_true", help="Gera Excel consolidado com as abas do briefing.")
     mode.add_argument("--generate-games", action="store_true", help="Gera jogos por metodo especifico para estudo/backtesting manual.")
     mode.add_argument("--serve", action="store_true", help="Inicia interface web local da Fase 10.")
@@ -69,12 +86,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top-games", type=int, default=100, help="Quantidade de candidatos finais a salvar.")
     parser.add_argument("--generations", type=int, default=20, help="Geracoes do genetico simples.")
     parser.add_argument("--population", type=int, default=80, help="Populacao por geracao do genetico simples.")
-    parser.add_argument("--max-overlap-final", type=int, default=10, help="Overlap maximo desejado entre os 2 jogos finais.")
+    parser.add_argument("--max-overlap-final", type=int, default=8, help="Overlap maximo desejado entre os 2 jogos finais.")
     parser.add_argument("--mode", choices=["rapido", "completo", "experimental"], default="rapido", help="Modo do --predict.")
     parser.add_argument("--method", default="balanceado_basico", help="Metodo do --generate-games.")
     parser.add_argument("--qty", type=int, default=10, help="Quantidade de jogos do --generate-games.")
     parser.add_argument("--draw-hour", type=int, default=20, help="Hora de Brasilia usada para contexto lunar do proximo sorteio.")
     parser.add_argument("--draw-minute", type=int, default=0, help="Minuto de Brasilia usado para contexto lunar do proximo sorteio.")
+    parser.add_argument("--actual-numbers", default=None, help="15 dezenas sorteadas para --analyze-result.")
+    parser.add_argument("--result-label", default="resultado", help="Rotulo do resultado analisado.")
+    parser.add_argument("--result-concurso", type=int, default=None, help="Numero do concurso analisado em --analyze-result.")
+    parser.add_argument("--prediction-file", default=None, help="CSV de previsao a comparar; se omitido, usa a previsao padrao.")
+    parser.add_argument("--final-n-eval", type=int, default=60, help="Concursos finais avaliados em --final-backtest.")
+    parser.add_argument("--final-candidate-pool", type=int, default=2500, help="Candidatos por concurso no --final-backtest.")
+    parser.add_argument("--final-generations", type=int, default=6, help="Geracoes por concurso no --final-backtest.")
+    parser.add_argument("--final-population", type=int, default=40, help="Populacao por concurso no --final-backtest.")
     parser.add_argument("--host", default="127.0.0.1", help="Host da interface web local.")
     parser.add_argument("--port", type=int, default=8765, help="Porta da interface web local.")
     return parser
@@ -98,6 +123,8 @@ def main() -> int:
         or args.ml
         or args.optimize
         or args.predict
+        or args.analyze_result
+        or args.final_backtest
         or args.export
         or args.generate_games
         or args.serve
@@ -121,6 +148,35 @@ def main() -> int:
             return 0
         if args.build_exe:
             summary = build_executable(config.base_dir)
+        elif args.analyze_result:
+            if not args.actual_numbers:
+                raise ValueError("Informe --actual-numbers com as 15 dezenas sorteadas.")
+            prediction_path = Path(args.prediction_file).resolve() if args.prediction_file else config.prediction_csv_path
+            result_label = _safe_file_label(args.result_label)
+            summary = analyze_post_result(
+                actual_numbers=args.actual_numbers,
+                predictions_path=prediction_path,
+                optimizer_candidates_path=config.optimizer_candidates_csv_path,
+                games_csv_path=_path_with_label(config.post_result_games_csv_path, result_label),
+                dezenas_csv_path=_path_with_label(config.post_result_dezenas_csv_path, result_label),
+                report_path=_path_with_label(config.post_result_report_path, result_label),
+                excel_path=_path_with_label(config.post_result_excel_path, result_label),
+                label=args.result_label,
+                concurso=args.result_concurso,
+            )
+        elif args.final_backtest:
+            summary = FinalBacktestPipeline(config=config, logger=logger).run(
+                n_eval=args.final_n_eval,
+                min_history=args.min_history,
+                seed=args.seed,
+                candidate_pool=args.final_candidate_pool,
+                top_games=args.top_games,
+                generations=args.final_generations,
+                population=args.final_population,
+                max_overlap=args.max_overlap_final,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+            )
         elif args.export:
             summary = export_full_workbook(config=config, logger=logger)
         elif args.generate_games:

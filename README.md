@@ -19,6 +19,8 @@ Fases implementadas:
 9. **Fase 9 - Geracao final de 2 jogos**.
 10. **Fase 10 - Interface local e build de executavel**.
 
+Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos e backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio.
+
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
 `src/lotofacil_analytics`
@@ -103,6 +105,12 @@ Rodar backtest com parametros:
 python main.py --backtest --n-eval 500 --min-history 300 --seed 123 --window 100 --candidates 2000
 ```
 
+Rodar backtest do score final completo:
+
+```powershell
+python main.py --final-backtest --final-n-eval 60 --min-history 300 --final-candidate-pool 2500 --final-generations 6 --final-population 40 --top-games 100 --max-overlap-final 8
+```
+
 Rodar auditoria estatistica:
 
 ```powershell
@@ -157,6 +165,12 @@ Gerar os 2 jogos finais em modo completo, recalculando as fases antes da selecao
 python main.py --predict --mode completo
 ```
 
+Analisar um resultado real contra os jogos previstos:
+
+```powershell
+python main.py --analyze-result --result-label sexta_2026-05-29 --actual-numbers "01 03 05 06 07 08 09 10 12 13 16 18 20 21 23"
+```
+
 Gerar Excel consolidado com as abas do briefing:
 
 ```powershell
@@ -191,6 +205,8 @@ data/processed/lotofacil_combinacoes_trios.csv
 data/processed/lotofacil_combinacoes_quartetos.csv
 data/processed/lotofacil_backtest.csv
 data/processed/lotofacil_backtest_summary.csv
+data/processed/lotofacil_backtest_final_score.csv
+data/processed/lotofacil_backtest_final_score_summary.csv
 data/processed/lotofacil_auditoria_resumo.csv
 data/processed/lotofacil_auditoria_dezenas.csv
 data/processed/lotofacil_auditoria_anomalias.csv
@@ -202,18 +218,23 @@ data/processed/lotofacil_optimizer_candidates.csv
 data/processed/lotofacil_optimizer_summary.csv
 data/processed/lotofacil_jogos_gerados.csv
 data/processed/lotofacil_prediction.csv
+data/processed/lotofacil_pos_sorteio_jogos_<rotulo>.csv
+data/processed/lotofacil_pos_sorteio_dezenas_<rotulo>.csv
 data/processed/lotofacil_state.json
 data/exports/lotofacil_historico.xlsx
 data/exports/lotofacil_features_base.xlsx
 data/exports/lotofacil_dezenas_historico.xlsx
 data/exports/lotofacil_combinacoes.xlsx
 data/exports/lotofacil_backtest.xlsx
+data/exports/lotofacil_backtest_final_score.xlsx
 data/exports/lotofacil_auditoria.xlsx
 data/exports/lotofacil_ml.xlsx
 data/exports/lotofacil_optimizer.xlsx
 data/exports/lotofacil_jogos_gerados.xlsx
 data/exports/lotofacil_prediction.xlsx
 data/exports/lotofacil_prediction_report.md
+data/exports/lotofacil_pos_sorteio_<rotulo>.xlsx
+data/exports/lotofacil_pos_sorteio_report_<rotulo>.md
 data/exports/lotofacil_analytics_completo.xlsx
 logs/lotofacil_analytics.log
 ```
@@ -290,6 +311,24 @@ O treino de cada linha usa somente concursos anteriores ao concurso avaliado. O 
 
 Esses metodos sao baselines e heuristicas simples. Resultado melhor em uma janela nao prova previsao real; serve para comparar contra o acaso e detectar overfitting nas fases futuras.
 
+## Backtesting do score final
+
+O comando `python main.py --final-backtest` testa o metodo final `ensemble_score_v2` em modo walk-forward.
+
+Ele simula concursos passados assim:
+
+1. separa apenas o historico anterior ao concurso avaliado;
+2. gera candidatos com o mesmo otimizador usado na previsao final;
+3. seleciona 2 jogos completos com limite de sobreposicao;
+4. compara contra o resultado real;
+5. compara o desempenho contra `baseline_2_jogos_aleatorios`.
+
+Saidas:
+
+1. `data/processed/lotofacil_backtest_final_score.csv`;
+2. `data/processed/lotofacil_backtest_final_score_summary.csv`;
+3. `data/exports/lotofacil_backtest_final_score.xlsx`.
+
 ## Auditoria estatistica da Fase 6
 
 O comando `python main.py --audit` gera uma auditoria exploratoria com:
@@ -322,11 +361,15 @@ O comando `python main.py --optimize` gera candidatos ranqueados por score compo
 
 Componentes do score:
 
-1. equilibrio estatistico: soma, pares, faixas, repeticao com ultimo concurso e sequencias;
+1. equilibrio estatistico: soma, pares, faixas, repeticao com ultimo concurso e sequencias, usando bandas historicas em vez de alvo fixo;
 2. historico recente: media de frequencia nos ultimos 100 concursos;
-3. anti-popularidade humana: penaliza excesso de numeros baixos, linhas/colunas completas, diagonais fortes e sequencias longas;
+3. anti-popularidade humana: penaliza excesso de padroes populares, mas sem bloquear linhas, colunas, diagonais e sequencias quando elas aparecem como cenario historico plausivel;
 4. combinatorio: penaliza pares historicamente muito frequentes;
-5. contextual: considera data do proximo concurso, dia da semana, mes, trimestre, semestre, estacao do ano, fase da lua no horario de Brasilia e numerologia exploratoria.
+5. contextual: considera data do proximo concurso, dia da semana, mes, trimestre, semestre, estacao do ano, fase da lua no horario de Brasilia e numerologia exploratoria;
+6. cenarios: reforca soma baixa/media/alta, sequencia forte, visual forte, assinatura historica por faixas e faixa alta 21-25;
+7. contrarian: monitora dezenas que os jogos anteriores penalizaram demais, como 01, 13 e 22.
+
+O score final `ensemble_score_v2` combina esses blocos com pesos documentados na aba/CSV de resumo do otimizador. A geracao de candidatos usa perfis variados, incluindo `soma_baixa`, `sequencia_forte`, `visual_forte`, `contrarian_controlado`, `faixa_alta_reforcada`, `assinatura_historica`, `weighted_temporal`, `monte_carlo_filtrado` e `genetico_simples`.
 
 Essa fase gera candidatos para a selecao final. Ela nao afirma que os candidatos sao previsoes garantidas.
 
@@ -343,7 +386,7 @@ Regras:
 3. dezenas entre 1 e 25;
 4. sem repeticao dentro do mesmo jogo;
 5. jogos distintos;
-6. diversidade minima configuravel por `--max-overlap-final`.
+6. diversidade minima configuravel por `--max-overlap-final`, com padrao 8.
 
 A saida de tela e curta. O detalhe tecnico fica em `data/exports/lotofacil_prediction_report.md`.
 
@@ -369,6 +412,31 @@ python main.py --predict --draw-hour 20 --draw-minute 0
 ```
 
 Os dois jogos gerados sao sempre jogos completos de 15 dezenas. O sistema nao divide uma previsao em metades entre sugestoes.
+
+## Analise pos-sorteio
+
+O comando `python main.py --analyze-result` compara um resultado real contra os jogos salvos em `data/processed/lotofacil_prediction.csv`.
+
+Exemplo para o sorteio de sexta:
+
+```powershell
+python main.py --analyze-result --result-label sexta_2026-05-29 --actual-numbers "01 03 05 06 07 08 09 10 12 13 16 18 20 21 23"
+```
+
+Exemplo para o sorteio de sabado:
+
+```powershell
+python main.py --analyze-result --result-label sabado_2026-05-30 --actual-numbers "01 02 03 05 06 08 09 11 14 18 20 21 22 24 25"
+```
+
+Cada rótulo gera arquivos separados, evitando sobrescrever a auditoria anterior:
+
+1. `data/processed/lotofacil_pos_sorteio_jogos_<rotulo>.csv`;
+2. `data/processed/lotofacil_pos_sorteio_dezenas_<rotulo>.csv`;
+3. `data/exports/lotofacil_pos_sorteio_report_<rotulo>.md`;
+4. `data/exports/lotofacil_pos_sorteio_<rotulo>.xlsx`.
+
+Essa analise mostra acertos por jogo, cobertura da uniao dos 2 jogos, dezenas sorteadas que ficaram fora, falsos positivos e hipoteses tecnicas para recalibracao.
 
 ## Geracao manual de jogos
 
@@ -405,9 +473,14 @@ O comando `python main.py --export` gera `data/exports/lotofacil_analytics_compl
 10. `quartetos`;
 11. `rankings`;
 12. `backtest`;
-13. `jogos_gerados`;
-14. `parametros`;
-15. `logs_execucao`.
+13. `backtest_score_final`;
+14. `backtest_score_final_resumo`;
+15. `jogos_gerados`;
+16. `pos_sorteio_jogos`;
+17. `pos_sorteio_dezenas`;
+18. `contexto_proximo_concurso`;
+19. `parametros`;
+20. `logs_execucao`.
 
 ## Interface e executavel da Fase 10
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -82,11 +83,14 @@ def _freq_in_window(previous_draws: Sequence[set[int]], dezena: int, window: int
     return sum(1 for draw in previous_draws[-window:] if dezena in draw)
 
 
-def _mean_gap(indices: List[int]) -> Optional[float]:
-    if len(indices) < 2:
-        return None
-    gaps = [indices[idx] - indices[idx - 1] - 1 for idx in range(1, len(indices))]
-    return round(float(pd.Series(gaps).mean()), 6)
+def _median(values: Sequence[int]) -> float:
+    ordered = sorted(int(value) for value in values)
+    if not ordered:
+        return 0.0
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[middle])
+    return float((ordered[middle - 1] + ordered[middle]) / 2)
 
 
 def _gap_stats(indices: List[int]) -> Dict[str, float | int | None]:
@@ -98,12 +102,13 @@ def _gap_stats(indices: List[int]) -> Dict[str, float | int | None]:
             "desvio_atraso_dezena": None,
         }
     gaps = [indices[idx] - indices[idx - 1] - 1 for idx in range(1, len(indices))]
-    series = pd.Series(gaps, dtype="float64")
+    mean = float(sum(gaps) / len(gaps))
+    variance = sum((float(value) - mean) ** 2 for value in gaps) / len(gaps)
     return {
-        "maior_atraso_historico_dezena": int(series.max()),
-        "media_atraso_dezena": round(float(series.mean()), 6),
-        "mediana_atraso_dezena": round(float(series.median()), 6),
-        "desvio_atraso_dezena": round(float(series.std(ddof=0)), 6),
+        "maior_atraso_historico_dezena": int(max(gaps)),
+        "media_atraso_dezena": round(mean, 6),
+        "mediana_atraso_dezena": round(_median(gaps), 6),
+        "desvio_atraso_dezena": round(float(math.sqrt(variance)), 6),
     }
 
 
@@ -252,7 +257,7 @@ def build_dezenas_historico(concursos: pd.DataFrame) -> pd.DataFrame:
                 "atraso_atual": int(atraso[dezena]),
                 "atraso_atual_dezena": int(atraso[dezena]),
                 "nunca_saiu_ate_anterior": int(last_seen_idx[dezena] is None),
-                "media_atraso_ate_anterior": _mean_gap(appearances[dezena]),
+                "media_atraso_ate_anterior": gap_stats["media_atraso_dezena"],
                 "percentil_atraso_dezena": atraso_percentil[dezena],
                 "ranking_atraso_dezena": int(rank_atraso[dezena]),
                 "rank_freq_total": int(rank_freq_total[dezena]),
