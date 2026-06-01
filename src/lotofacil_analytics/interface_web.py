@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable
+from pathlib import Path
+from typing import Any, Callable
+
+import pandas as pd
 
 from .config import AppConfig
 from .decision_layer_pipeline import DecisionLayerPipeline
@@ -21,14 +25,46 @@ def _html_page() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Lotofacil Analytics</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 32px; max-width: 980px; color: #17202a; }
+    body { font-family: Arial, sans-serif; margin: 32px; max-width: 1220px; color: #17202a; }
     header { border-bottom: 1px solid #d7dbdd; margin-bottom: 24px; padding-bottom: 12px; }
+    h1 { margin-bottom: 8px; }
     button { margin: 4px 8px 4px 0; padding: 10px 14px; border: 1px solid #85929e; background: #f8f9f9; cursor: pointer; }
     button:hover { background: #eaecee; }
-    .games { display: grid; gap: 12px; margin: 18px 0; }
-    .game { border: 1px solid #d7dbdd; padding: 14px; border-radius: 6px; font-size: 18px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+    .toolbar button { margin: 0; }
+    .games { display: grid; gap: 16px; margin: 18px 0; }
+    .game-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+    .game { border: 1px solid #d7dbdd; padding: 16px; border-radius: 6px; background: #ffffff; }
+    .game-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .game h2, .comparison h2 { font-size: 20px; margin: 0; }
+    .numbers { font-size: 22px; line-height: 1.35; margin: 10px 0 14px; word-spacing: 3px; }
+    .tag { display: inline-block; border: 1px solid #aeb6bf; border-radius: 999px; padding: 3px 8px; font-size: 12px; color: #34495e; background: #f8f9f9; white-space: nowrap; }
+    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 12px 0; }
+    .meta-item { border: 1px solid #e5e8e8; border-radius: 6px; padding: 8px; background: #fbfcfc; }
+    .meta-label { display: block; color: #566573; font-size: 12px; margin-bottom: 2px; }
+    .meta-value { font-size: 15px; font-weight: 700; }
+    .metrics { display: grid; gap: 9px; margin-top: 12px; }
+    .metric-row { display: grid; grid-template-columns: minmax(130px, 170px) 1fr 58px; gap: 10px; align-items: center; }
+    .metric-label { color: #34495e; font-size: 13px; }
+    .metric-value { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+    .bar { height: 9px; border-radius: 999px; background: #e5e8e8; overflow: hidden; }
+    .bar-fill { height: 100%; background: #1f618d; }
+    .bar-fill.alt { background: #117864; }
+    .exclusives { margin-top: 12px; padding-top: 12px; border-top: 1px solid #edf1f2; color: #34495e; font-size: 14px; }
+    .comparison { border: 1px solid #d7dbdd; padding: 16px; border-radius: 6px; background: #fbfcfc; }
+    .compare-grid { display: grid; gap: 10px; margin-top: 14px; }
+    .compare-row { display: grid; grid-template-columns: 150px 1fr 1fr; gap: 12px; align-items: center; }
+    .compare-title { color: #34495e; font-size: 13px; }
+    .compare-cell { display: grid; grid-template-columns: 1fr 56px; gap: 8px; align-items: center; }
+    .compare-empty { color: #85929e; font-size: 13px; }
     pre { background: #f4f6f7; padding: 12px; overflow: auto; border: 1px solid #d7dbdd; }
     .muted { color: #566573; }
+    @media (max-width: 700px) {
+      body { margin: 18px; }
+      .metric-row, .compare-row { grid-template-columns: 1fr; }
+      .metric-value { text-align: left; }
+      .numbers { font-size: 19px; }
+    }
   </style>
 </head>
 <body>
@@ -36,16 +72,107 @@ def _html_page() -> str:
     <h1>Lotofacil Analytics</h1>
     <p class="muted">Execucao local em Python. Sugestoes estatisticas, sem garantia de acerto.</p>
   </header>
-  <button onclick="status()">Status</button>
-  <button onclick="updateBase()">Atualizar base</button>
-  <button onclick="transitions()">Analisar transições</button>
-  <button onclick="predictSingle()">Gerar jogo unico</button>
-  <button onclick="predict()">Gerar 2 jogos</button>
-  <button onclick="window.location='/report'">Baixar relatorio</button>
-  <button onclick="window.location='/single-report'">Baixar relatorio jogo unico</button>
+  <div class="toolbar">
+    <button onclick="status()">Status</button>
+    <button onclick="updateBase()">Atualizar base</button>
+    <button onclick="transitions()">Analisar transições</button>
+    <button onclick="predictSingle()">Gerar jogo unico</button>
+    <button onclick="predict()">Gerar 2 jogos</button>
+    <button onclick="window.location='/report'">Baixar relatorio</button>
+    <button onclick="window.location='/single-report'">Baixar relatorio jogo unico</button>
+  </div>
   <section class="games" id="games"></section>
   <pre id="output">Pronto.</pre>
   <script>
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, function(char) {
+        return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'}[char];
+      });
+    }
+    function scoreValue(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+    function metricBar(label, value, alt) {
+      const number = scoreValue(value);
+      if (number === null) {
+        return '';
+      }
+      const pct = Math.max(0, Math.min(100, number));
+      const fillClass = alt ? 'bar-fill alt' : 'bar-fill';
+      return '<div class="metric-row">' +
+        '<div class="metric-label">' + escapeHtml(label) + '</div>' +
+        '<div class="bar"><div class="' + fillClass + '" style="width:' + pct.toFixed(2) + '%"></div></div>' +
+        '<div class="metric-value">' + number.toFixed(2) + '</div>' +
+      '</div>';
+    }
+    function metaItem(label, value) {
+      if (value === undefined || value === null || value === '') {
+        return '';
+      }
+      return '<div class="meta-item"><span class="meta-label">' + escapeHtml(label) + '</span><span class="meta-value">' + escapeHtml(value) + '</span></div>';
+    }
+    function renderGameCard(title, row, fallbackNums, isSecond) {
+      const data = row || {};
+      const nums = data.nums || fallbackNums || '';
+      const criterio = data.criterio_selecao ? '<span class="tag">' + escapeHtml(data.criterio_selecao) + '</span>' : '';
+      const metrics = [
+        metricBar('Score final', data.score_final, false),
+        metricBar('Score contextual', data.score_contextual, false),
+        metricBar('Score transição', data.score_transicao, false),
+        isSecond ? metricBar('Score portfólio', data.score_portfolio_jogo_2, true) : '',
+        isSecond ? metricBar('Diversidade vs Jogo 1', data.score_diversidade_jogo_2, true) : '',
+        isSecond ? metricBar('Força dos componentes', data.score_forca_componentes_jogo_2, true) : ''
+      ].join('');
+      const exclusives = isSecond && data.dezenas_exclusivas_jogo_2
+        ? '<div class="exclusives"><strong>Dezenas exclusivas do Jogo 2:</strong> ' + escapeHtml(data.dezenas_exclusivas_jogo_2) + '</div>'
+        : '';
+      return '<article class="game">' +
+        '<div class="game-head"><h2>' + escapeHtml(title) + '</h2>' + criterio + '</div>' +
+        '<div class="numbers">' + escapeHtml(nums) + '</div>' +
+        '<div class="meta">' +
+          metaItem('Rank', data.rank) +
+          metaItem('Overlap Jogo 1', data.overlap_com_jogo_1) +
+          metaItem('Únicas vs Jogo 1', data.dezenas_unicas_vs_jogo_1) +
+          metaItem('Soma', data.soma) +
+          metaItem('Pares', data.qtd_pares) +
+          metaItem('Repetidas último', data.overlap_ultimo) +
+        '</div>' +
+        '<div class="metrics">' + metrics + '</div>' +
+        exclusives +
+      '</article>';
+    }
+    function compareCell(value) {
+      const number = scoreValue(value);
+      if (number === null) {
+        return '<div class="compare-empty">-</div>';
+      }
+      const pct = Math.max(0, Math.min(100, number));
+      return '<div class="compare-cell"><div class="bar"><div class="bar-fill" style="width:' + pct.toFixed(2) + '%"></div></div><div class="metric-value">' + number.toFixed(2) + '</div></div>';
+    }
+    function compareRow(label, first, second) {
+      return '<div class="compare-row">' +
+        '<div class="compare-title">' + escapeHtml(label) + '</div>' +
+        compareCell(first) +
+        compareCell(second) +
+      '</div>';
+    }
+    function renderComparison(rows) {
+      if (!Array.isArray(rows) || rows.length < 2) {
+        return '';
+      }
+      const first = rows[0] || {};
+      const second = rows[1] || {};
+      return '<section class="comparison">' +
+        '<h2>Comparação visual dos scores</h2>' +
+        '<div class="compare-grid">' +
+          compareRow('Score final', first.score_final, second.score_final) +
+          compareRow('Score contextual', first.score_contextual, second.score_contextual) +
+          compareRow('Score transição', first.score_transicao, second.score_transicao) +
+          compareRow('Score portfólio', null, second.score_portfolio_jogo_2) +
+        '</div>' +
+      '</section>';
+    }
     async function request(path, options) {
       const output = document.getElementById('output');
       output.textContent = 'Processando...';
@@ -60,24 +187,66 @@ def _html_page() -> str:
     async function predict() {
       const data = await request('/api/predict', {method: 'POST'});
       const games = document.getElementById('games');
-      games.innerHTML = '';
+      const rows = Array.isArray(data.games) ? data.games : [];
       if (data.jogo_1) {
-        games.innerHTML += '<div class="game"><strong>Jogo 1</strong><br>' + data.jogo_1 + '</div>';
-        games.innerHTML += '<div class="game"><strong>Jogo 2</strong><br>' + data.jogo_2 + '</div>';
+        const row1 = rows[0] || {nums: data.jogo_1};
+        const row2 = rows[1] || {nums: data.jogo_2};
+        games.innerHTML = '<div class="game-grid">' +
+          renderGameCard('Jogo 1', row1, data.jogo_1, false) +
+          renderGameCard('Jogo 2', row2, data.jogo_2, true) +
+        '</div>' + renderComparison([row1, row2]);
+      } else {
+        games.innerHTML = '';
       }
     }
     async function predictSingle() {
       const data = await request('/api/predict-single', {method: 'POST'});
       const games = document.getElementById('games');
-      games.innerHTML = '';
+      const row = data.game || {};
       if (data.jogo_unico) {
-        games.innerHTML += '<div class="game"><strong>Jogo unico</strong><br>' + data.jogo_unico + '</div>';
+        games.innerHTML = '<div class="game-grid">' + renderGameCard('Jogo unico', row, data.jogo_unico, false) + '</div>';
+      } else {
+        games.innerHTML = '';
       }
     }
   </script>
 </body>
 </html>
 """
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (str, int, bool)):
+        return value
+    if hasattr(value, "item"):
+        try:
+            return _json_safe(value.item())
+        except (TypeError, ValueError):
+            pass
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
+def _read_csv_records(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    df = pd.read_csv(path)
+    if df.empty:
+        return []
+    clean = df.astype(object).where(pd.notna(df), None)
+    return clean.to_dict(orient="records")
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> None:
@@ -142,36 +311,49 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 self._handle_json(lambda: TransitionPipeline(config=config, logger=logger).run().__dict__)
                 return
             if self.path == "/api/predict":
-                self._handle_json(lambda: PredictorPipeline(config=config, logger=logger).predict(
-                    seed=123,
-                    candidate_pool=10000,
-                    top_games=100,
-                    generations=20,
-                    population=80,
-                    max_overlap=8,
-                    engine="exaustivo",
-                ).__dict__)
+                def predict_payload() -> dict:
+                    summary = PredictorPipeline(config=config, logger=logger).predict(
+                        seed=123,
+                        candidate_pool=10000,
+                        top_games=100,
+                        generations=20,
+                        population=80,
+                        max_overlap=8,
+                        engine="exaustivo",
+                    )
+                    payload = summary.__dict__.copy()
+                    payload["games"] = _read_csv_records(config.prediction_csv_path)
+                    return payload
+
+                self._handle_json(predict_payload)
                 return
             if self.path == "/api/predict-single":
-                self._handle_json(lambda: DecisionLayerPipeline(config=config, logger=logger).predict_single(
-                    seed=123,
-                    candidate_pool=10000,
-                    top_games=100,
-                    generations=20,
-                    population=80,
-                    draw_hour=20,
-                    draw_minute=0,
-                    engine="exaustivo",
-                    exhaustive_limit=None,
-                    weight_profile="padrao_atual",
-                ).__dict__)
+                def predict_single_payload() -> dict:
+                    summary = DecisionLayerPipeline(config=config, logger=logger).predict_single(
+                        seed=123,
+                        candidate_pool=10000,
+                        top_games=100,
+                        generations=20,
+                        population=80,
+                        draw_hour=20,
+                        draw_minute=0,
+                        engine="exaustivo",
+                        exhaustive_limit=None,
+                        weight_profile="padrao_atual",
+                    )
+                    payload = summary.__dict__.copy()
+                    rows = _read_csv_records(config.single_prediction_csv_path)
+                    payload["game"] = rows[0] if rows else {}
+                    return payload
+
+                self._handle_json(predict_single_payload)
                 return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})
 
         def _handle_json(self, fn: Callable[[], dict]) -> None:
             try:
                 payload = fn()
-                serializable = {key: str(value) for key, value in payload.items()}
+                serializable = _json_safe(payload)
                 _json_response(self, HTTPStatus.OK, serializable)
             except Exception as exc:
                 logger.exception("Erro na interface web: %s", exc)

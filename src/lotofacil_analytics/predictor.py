@@ -61,6 +61,80 @@ def _overlap(a: Sequence[int], b: Sequence[int]) -> int:
     return len(set(a) & set(b))
 
 
+def _format_nums(nums: Sequence[int]) -> str:
+    return " ".join(f"{int(n):02d}" for n in sorted(nums))
+
+
+def _safe_float(row: pd.Series, column: str, default: float = 0.0) -> float:
+    if column not in row:
+        return default
+    try:
+        value = float(row.get(column, default))
+    except (TypeError, ValueError):
+        return default
+    if pd.isna(value):
+        return default
+    return value
+
+
+def _mean_available_scores(row: pd.Series, columns: Sequence[str]) -> float:
+    values: List[float] = []
+    for column in columns:
+        if column not in row:
+            continue
+        try:
+            value = float(row.get(column))
+        except (TypeError, ValueError):
+            continue
+        if not pd.isna(value):
+            values.append(value)
+    if not values:
+        return _safe_float(row, "score_final")
+    return sum(values) / len(values)
+
+
+def _portfolio_metrics_for_second(row: pd.Series, first_nums: Sequence[int]) -> Dict[str, object]:
+    nums = _parse_nums(str(row["nums"]))
+    overlap = _overlap(first_nums, nums)
+    unique_second = sorted(set(nums) - set(first_nums))
+    unique_first = sorted(set(first_nums) - set(nums))
+    diversity_score = round(((15 - overlap) / 15) * 100, 6)
+    strength_score = round(
+        _mean_available_scores(
+            row,
+            [
+                "score_estatistico",
+                "score_historico",
+                "score_atraso",
+                "score_combinatorio",
+                "score_cenarios",
+                "score_contrarian",
+            ],
+        ),
+        6,
+    )
+    final_score = _safe_float(row, "score_final")
+    transition_score = _safe_float(row, "score_transicao", final_score)
+    contextual_score = _safe_float(row, "score_contextual", _safe_float(row, "score_localidade_numerologia", final_score))
+    portfolio_score = round(
+        (final_score * 0.58)
+        + (transition_score * 0.14)
+        + (contextual_score * 0.10)
+        + (diversity_score * 0.12)
+        + (strength_score * 0.06),
+        6,
+    )
+    return {
+        "overlap_com_jogo_1": overlap,
+        "dezenas_unicas_vs_jogo_1": 15 - overlap,
+        "dezenas_exclusivas_jogo_2": _format_nums(unique_second),
+        "dezenas_exclusivas_jogo_1": _format_nums(unique_first),
+        "score_diversidade_jogo_2": diversity_score,
+        "score_forca_componentes_jogo_2": strength_score,
+        "score_portfolio_jogo_2": portfolio_score,
+    }
+
+
 def select_final_games(candidates: pd.DataFrame, *, max_overlap: int = 10) -> pd.DataFrame:
     if candidates.empty:
         raise ValueError("Nenhum candidato disponivel para selecao final.")
@@ -70,24 +144,47 @@ def select_final_games(candidates: pd.DataFrame, *, max_overlap: int = 10) -> pd
     ranked = candidates.copy().sort_values(["score_final", "nums"], ascending=[False, True]).reset_index(drop=True)
     first = ranked.iloc[0].copy()
     first_nums = _parse_nums(first["nums"])
-    second = None
+    first["criterio_selecao"] = "principal_rank_1"
+    first["overlap_com_jogo_1"] = 15
+    first["dezenas_unicas_vs_jogo_1"] = 0
+    first["dezenas_exclusivas_jogo_2"] = ""
+    first["dezenas_exclusivas_jogo_1"] = ""
+    first["score_diversidade_jogo_2"] = pd.NA
+    first["score_forca_componentes_jogo_2"] = pd.NA
+    first["score_portfolio_jogo_2"] = pd.NA
+
+    eligible_second_rows: List[pd.Series] = []
     for _, row in ranked.iloc[1:].iterrows():
         nums = _parse_nums(row["nums"])
         if nums != first_nums and _overlap(first_nums, nums) <= int(max_overlap):
-            second = row.copy()
-            break
+            enriched = row.copy()
+            for key, value in _portfolio_metrics_for_second(enriched, first_nums).items():
+                enriched[key] = value
+            enriched["criterio_selecao"] = f"portfolio_inteligente_overlap<={int(max_overlap)}"
+            eligible_second_rows.append(enriched)
+
+    if eligible_second_rows:
+        second_ranked = pd.DataFrame(eligible_second_rows).sort_values(
+            ["score_portfolio_jogo_2", "score_final", "nums"],
+            ascending=[False, False, True],
+        )
+        second = second_ranked.iloc[0].copy()
+    else:
+        second = None
     if second is None:
         for _, row in ranked.iloc[1:].iterrows():
             nums = _parse_nums(row["nums"])
             if nums != first_nums:
                 second = row.copy()
+                for key, value in _portfolio_metrics_for_second(second, first_nums).items():
+                    second[key] = value
+                second["criterio_selecao"] = "fallback_sem_overlap_minimo"
                 break
     if second is None:
         raise ValueError("Nao foi possivel selecionar dois jogos distintos.")
 
     out = pd.DataFrame([first, second]).reset_index(drop=True)
     out.insert(0, "jogo", [1, 2])
-    out["overlap_com_jogo_1"] = [15, _overlap(first_nums, _parse_nums(str(second["nums"])))]
     return out
 
 
@@ -130,13 +227,24 @@ def build_prediction_report(
         "",
     ]
     for _, row in final_games.iterrows():
-        lines.append(
-            f"- Jogo {int(row['jogo'])}: {row['nums']} | "
-            f"score_final={float(row['score_final']):.6f} | "
-            f"score_contextual={float(row.get('score_contextual', 0)):.6f} | "
-            f"score_transicao={float(row.get('score_transicao', 0)):.6f} | "
-            f"metodo_origem={row.get('metodo', '-')}"
-        )
+        parts = [
+            f"- Jogo {int(row['jogo'])}: {row['nums']}",
+            f"score_final={_safe_float(row, 'score_final'):.6f}",
+            f"score_contextual={_safe_float(row, 'score_contextual'):.6f}",
+            f"score_transicao={_safe_float(row, 'score_transicao'):.6f}",
+            f"overlap_com_jogo_1={int(_safe_float(row, 'overlap_com_jogo_1'))}",
+            f"criterio={row.get('criterio_selecao', '-')}",
+            f"metodo_origem={row.get('metodo', '-')}",
+        ]
+        if int(row["jogo"]) == 2:
+            parts.extend(
+                [
+                    f"score_portfolio_jogo_2={_safe_float(row, 'score_portfolio_jogo_2'):.6f}",
+                    f"score_diversidade_jogo_2={_safe_float(row, 'score_diversidade_jogo_2'):.6f}",
+                    f"dezenas_exclusivas_jogo_2={row.get('dezenas_exclusivas_jogo_2', '')}",
+                ]
+            )
+        lines.append(" | ".join(parts))
     lines.extend(
         [
             "",
@@ -151,7 +259,8 @@ def build_prediction_report(
             "7. score contrarian: protege dezenas que o score tradicional poderia excluir, como canto, centro e faixa alta;",
             "8. score de transicao: compara cada concurso N com N+1 no historico e pontua repeticoes, entradas, saidas e estrutura de mudanca;",
             "9. varredura exaustiva das combinacoes possiveis;",
-            "10. diversidade minima entre os dois jogos.",
+            "10. seletor inteligente do Jogo 2: entre os candidatos que respeitam a diversidade minima, escolhe o melhor score de portfolio combinando score final, transicao, contexto, forca dos componentes e dezenas diferentes do Jogo 1;",
+            "11. diversidade minima entre os dois jogos.",
             "",
             f"Combinacoes possiveis da Lotofacil: {TOTAL_COMBINATIONS}.",
             "Os dois jogos sao combinacoes completas de 15 dezenas. O sistema nao divide um palpite em metades entre sugestoes.",

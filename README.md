@@ -456,7 +456,9 @@ Regras:
 3. dezenas entre 1 e 25;
 4. sem repeticao dentro do mesmo jogo;
 5. jogos distintos;
-6. diversidade minima configuravel por `--max-overlap-final`, com padrao 8.
+6. diversidade minima configuravel por `--max-overlap-final`, com padrao 8;
+7. Jogo 1 vem do melhor candidato do motor principal;
+8. Jogo 2 passa por um seletor inteligente de portfolio: entre os candidatos que respeitam a diversidade, ele combina `score_final`, `score_transicao`, `score_contextual`, forca dos componentes e dezenas exclusivas contra o Jogo 1.
 
 A saida de tela e curta. O detalhe tecnico fica em `data/exports/lotofacil_prediction_report.md`.
 
@@ -633,6 +635,8 @@ http://127.0.0.1:8765
 ```
 
 A tela local permite atualizar a base, analisar transicoes, gerar 2 jogos, gerar o jogo unico da camada superior e baixar os relatorios correspondentes.
+
+Ao gerar 2 jogos, a interface mostra a comparacao visual dos scores dos dois jogos. O Jogo 2 tambem exibe o `score_portfolio_jogo_2`, o overlap contra o Jogo 1 e as dezenas exclusivas usadas para diversificar a sugestao.
 
 Build de executavel:
 

@@ -423,6 +423,55 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertNotEqual(final_games.loc[0, "nums"], final_games.loc[1, "nums"])
         self.assertLessEqual(int(final_games.loc[1, "overlap_com_jogo_1"]), 10)
 
+    def test_select_final_games_uses_portfolio_score_for_second_game(self) -> None:
+        candidates = pd.DataFrame(
+            [
+                {
+                    "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15",
+                    "score_final": 99.0,
+                    "score_contextual": 70.0,
+                    "score_transicao": 70.0,
+                    "score_estatistico": 99.0,
+                    "score_historico": 99.0,
+                    "score_atraso": 99.0,
+                    "score_combinatorio": 99.0,
+                    "score_cenarios": 99.0,
+                    "score_contrarian": 99.0,
+                },
+                {
+                    "nums": "01 02 03 04 05 06 07 08 16 17 18 19 20 21 22",
+                    "score_final": 95.0,
+                    "score_contextual": 30.0,
+                    "score_transicao": 30.0,
+                    "score_estatistico": 95.0,
+                    "score_historico": 95.0,
+                    "score_atraso": 95.0,
+                    "score_combinatorio": 95.0,
+                    "score_cenarios": 95.0,
+                    "score_contrarian": 95.0,
+                },
+                {
+                    "nums": "01 02 03 04 05 06 07 08 18 19 20 21 22 23 24",
+                    "score_final": 94.0,
+                    "score_contextual": 100.0,
+                    "score_transicao": 100.0,
+                    "score_estatistico": 95.0,
+                    "score_historico": 95.0,
+                    "score_atraso": 95.0,
+                    "score_combinatorio": 95.0,
+                    "score_cenarios": 95.0,
+                    "score_contrarian": 95.0,
+                },
+            ]
+        )
+
+        final_games = select_final_games(candidates, max_overlap=8)
+
+        self.assertEqual(final_games.loc[1, "nums"], "01 02 03 04 05 06 07 08 18 19 20 21 22 23 24")
+        self.assertIn("score_portfolio_jogo_2", final_games.columns)
+        self.assertIn("score_diversidade_jogo_2", final_games.columns)
+        self.assertEqual(final_games.loc[1, "criterio_selecao"], "portfolio_inteligente_overlap<=8")
+
     def test_web_interface_html_contains_expected_controls(self) -> None:
         html = _html_page()
         self.assertIn("Lotofacil Analytics", html)
@@ -431,6 +480,8 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("/api/predict", html)
         self.assertIn("/api/predict-single", html)
         self.assertIn("/report", html)
+        self.assertIn("Comparação visual dos scores", html)
+        self.assertIn("score_portfolio_jogo_2", html)
 
     def test_generate_games_balanceado_returns_requested_quantity(self) -> None:
         rows = []
