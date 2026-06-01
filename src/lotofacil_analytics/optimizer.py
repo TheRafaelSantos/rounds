@@ -37,7 +37,7 @@ class OptimizerSummary:
                 f"CSV candidatos: {self.candidates_csv_path}",
                 f"CSV resumo: {self.summary_csv_path}",
                 f"Excel: {self.excel_path}",
-                "Mensagem: Otimizacao heuristica gerada para apoiar a selecao final.",
+                "Mensagem: Otimizacao gerada para apoiar a selecao final.",
             ]
         )
 

@@ -25,6 +25,8 @@ class PredictorPipeline:
         max_overlap: int,
         draw_hour: int = 20,
         draw_minute: int = 0,
+        engine: str = "exaustivo",
+        exhaustive_limit: int | None = None,
     ) -> PredictionSummary:
         concursos = load_processed_csv(self.config.processed_csv_path)
         if concursos.empty:
@@ -45,6 +47,8 @@ class PredictorPipeline:
             prediction_csv_path=self.config.prediction_csv_path,
             report_path=self.config.prediction_report_path,
             excel_path=self.config.prediction_excel_path,
+            engine=engine,
+            exhaustive_limit=exhaustive_limit,
         )
 
         self.logger.info("Predicao final salva em %s", self.config.prediction_csv_path)

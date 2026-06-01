@@ -8,6 +8,7 @@ from typing import Dict, List, Sequence, Tuple
 import pandas as pd
 
 from .context_features import TargetContext, build_target_context
+from .exhaustive_optimizer import TOTAL_COMBINATIONS, build_exhaustive_candidates
 from .optimizer import build_optimized_candidates
 
 
@@ -28,6 +29,7 @@ class PredictionSummary:
     prediction_csv_path: str
     report_path: str
     excel_path: str
+    metodo: str = "ensemble_score_v3_exaustivo"
 
     def to_console(self) -> str:
         return "\n".join(
@@ -39,7 +41,7 @@ class PredictionSummary:
                 f"Dia da semana: {self.dia_semana}",
                 f"Lua no horario de Brasilia: {self.fase_lua} ({self.iluminacao_lua_percentual:.2f}% iluminada)",
                 f"Numerologia da data: raiz {self.numerologia_data_raiz}",
-                "Metodo: ensemble_score_v2",
+                f"Metodo: {self.metodo}",
                 f"Jogo 1 principal: {self.jogo_1}",
                 f"Jogo 2 alternativo completo: {self.jogo_2}",
                 f"Aviso: {AVISO_TECNICO}",
@@ -98,6 +100,7 @@ def build_prediction_report(
     last_date: str,
     max_overlap: int,
     target_context: TargetContext,
+    source_model: str,
 ) -> str:
     lines = [
         "# Relatorio tecnico - Lotofacil Analytics",
@@ -105,7 +108,7 @@ def build_prediction_report(
         f"Gerado em: {generated_at}",
         f"Ultimo concurso na base: {last_concurso} ({last_date})",
         f"Concurso-alvo estimado: {concurso_alvo}",
-        "Metodo: ensemble_score_v2",
+        f"Metodo: {source_model}",
         f"Diversidade maxima configurada entre jogos: overlap <= {max_overlap}",
         "",
         "## Contexto do proximo concurso",
@@ -117,6 +120,9 @@ def build_prediction_report(
         f"- Lua: {target_context.fase_lua}; idade {target_context.idade_lua:.2f} dias; iluminacao {target_context.iluminacao_lua_percentual:.2f}%",
         f"- Numerologia: raiz da data {target_context.numerologia_data_raiz}; raiz do concurso {target_context.numerologia_concurso_raiz}; raiz dia+mes {target_context.numerologia_dia_mes_raiz}",
         f"- Observacao: {target_context.observacao_horario}",
+        f"- Localidade usada: {target_context.local_sorteio_assumido or '-'} | {target_context.cidade_sorteio_assumida or '-'} | {target_context.uf_sorteio_assumida or '-'}",
+        f"- Bairro: {target_context.bairro_sorteio_assumido or 'indisponivel na base atual'}",
+        f"- Observacao localidade: {target_context.observacao_localidade}",
         "",
         "Aviso: sugestoes matematicas/estatisticas; nao existe garantia de acerto em sorteios aleatorios.",
         "",
@@ -137,13 +143,15 @@ def build_prediction_report(
             "",
             "1. score estatistico de equilibrio;",
             "2. score historico recente;",
-            "3. score anti-popularidade humana;",
+            "3. score de atraso historico;",
             "4. score combinatorio;",
-            "5. score contextual: data do proximo concurso, dia da semana, periodo do ano, fase da lua e numerologia exploratoria;",
+            "5. score contextual: data do proximo concurso, dia da semana, periodo do ano, fase da lua, numerologia e localidade;",
             "6. score de cenarios: soma baixa/media/alta, sequencias, faixas historicas e visual forte permitido;",
             "7. score contrarian: protege dezenas que o score tradicional poderia excluir, como canto, centro e faixa alta;",
-            "8. diversidade minima entre os dois jogos.",
+            "8. varredura exaustiva das combinacoes possiveis;",
+            "9. diversidade minima entre os dois jogos.",
             "",
+            f"Combinacoes possiveis da Lotofacil: {TOTAL_COMBINATIONS}.",
             "Os dois jogos sao combinacoes completas de 15 dezenas. O sistema nao divide um palpite em metades entre sugestoes.",
             "",
             "## Limite tecnico",
@@ -169,6 +177,8 @@ def build_final_prediction(
     prediction_csv_path: Path,
     report_path: Path,
     excel_path: Path,
+    engine: str = "exaustivo",
+    exhaustive_limit: int | None = None,
 ) -> PredictionSummary:
     if concursos.empty:
         raise ValueError("Historico local nao encontrado. Rode primeiro: python main.py --update")
@@ -180,9 +190,27 @@ def build_final_prediction(
     concurso_alvo = last_concurso + 1
     target_context = build_target_context(df, draw_hour=draw_hour, draw_minute=draw_minute)
 
+    source_model = "ensemble_score_v3_exaustivo" if engine == "exaustivo" else "ensemble_score_v2"
     required_context_cols = {"score_contextual", "contexto_data_proximo_concurso", "contexto_fase_lua"}
-    if existing_candidates is not None and not existing_candidates.empty and required_context_cols.issubset(existing_candidates.columns):
+    has_matching_engine = (
+        existing_candidates is not None
+        and not existing_candidates.empty
+        and required_context_cols.issubset(existing_candidates.columns)
+        and (
+            (engine != "exaustivo" and "source_model" not in existing_candidates.columns)
+            or str(existing_candidates["source_model"].iloc[0]) == source_model
+        )
+    )
+    if has_matching_engine:
         candidates = existing_candidates.copy()
+    elif engine == "exaustivo":
+        candidates, _summary = build_exhaustive_candidates(
+            df,
+            top_games=max(top_games, 5000),
+            draw_hour=draw_hour,
+            draw_minute=draw_minute,
+            limit_combinations=exhaustive_limit,
+        )
     else:
         candidates, _summary = build_optimized_candidates(
             df,
@@ -205,6 +233,10 @@ def build_final_prediction(
     final_games.insert(5, "fase_lua_proximo_concurso", target_context.fase_lua)
     final_games.insert(6, "iluminacao_lua_percentual", target_context.iluminacao_lua_percentual)
     final_games.insert(7, "numerologia_data_raiz", target_context.numerologia_data_raiz)
+    if "source_model" in final_games.columns:
+        final_games["source_model"] = source_model
+    else:
+        final_games.insert(8, "source_model", source_model)
     final_games["aviso"] = AVISO_TECNICO
 
     prediction_csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,6 +253,7 @@ def build_final_prediction(
             last_date=last_date,
             max_overlap=max_overlap,
             target_context=target_context,
+            source_model=source_model,
         ),
         encoding="utf-8",
     )
@@ -238,4 +271,5 @@ def build_final_prediction(
         prediction_csv_path=str(prediction_csv_path),
         report_path=str(report_path),
         excel_path=str(excel_path),
+        metodo=source_model,
     )

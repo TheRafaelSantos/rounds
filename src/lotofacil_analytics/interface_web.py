@@ -118,7 +118,8 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                     top_games=100,
                     generations=20,
                     population=80,
-                    max_overlap=10,
+                    max_overlap=8,
+                    engine="exaustivo",
                 ).__dict__)
                 return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})

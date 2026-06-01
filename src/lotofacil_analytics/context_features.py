@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime, time, timezone
@@ -44,7 +45,12 @@ class TargetContext:
     numerologia_data_raiz: int
     numerologia_concurso_raiz: int
     numerologia_dia_mes_raiz: int
+    local_sorteio_assumido: str
+    cidade_sorteio_assumida: str
+    uf_sorteio_assumida: str
+    bairro_sorteio_assumido: str
     observacao_horario: str
+    observacao_localidade: str
 
     def as_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -66,6 +72,14 @@ def digital_root(value: int) -> int:
     if value == 0:
         return 0
     return 1 + ((value - 1) % 9)
+
+
+def normalize_context_text(value: object) -> str:
+    text = "" if pd.isna(value) else str(value)
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = "".join(ch.upper() if ch.isalnum() else " " for ch in text)
+    return " ".join(text.split())
 
 
 def estacao_do_ano(date: pd.Timestamp) -> str:
@@ -130,6 +144,10 @@ def build_target_context(concursos: pd.DataFrame, *, draw_hour: int = 20, draw_m
     draw_datetime = datetime.combine(target_date.date(), draw_time, tzinfo=BRASILIA_TZ)
     moon = moon_phase(draw_datetime)
     weekday = int(target_date.isoweekday())
+    local = normalize_context_text(last.get("local_sorteio", ""))
+    cidade = normalize_context_text(last.get("cidade_sorteio", ""))
+    uf = normalize_context_text(last.get("uf_sorteio", ""))
+    bairro = normalize_context_text(last.get("bairro_sorteio", "")) if "bairro_sorteio" in last.index else ""
     return TargetContext(
         concurso_alvo=concurso_alvo,
         data_proximo_concurso=target_date.date().isoformat(),
@@ -147,7 +165,12 @@ def build_target_context(concursos: pd.DataFrame, *, draw_hour: int = 20, draw_m
         numerologia_data_raiz=digital_root(int(target_date.strftime("%Y%m%d"))),
         numerologia_concurso_raiz=digital_root(concurso_alvo),
         numerologia_dia_mes_raiz=digital_root(int(target_date.day) + int(target_date.month)),
+        local_sorteio_assumido=local,
+        cidade_sorteio_assumida=cidade,
+        uf_sorteio_assumida=uf,
+        bairro_sorteio_assumido=bairro,
         observacao_horario="A API da CAIXA informa a data do proximo concurso, mas nao o horario; foi usado horario de Brasilia configuravel.",
+        observacao_localidade="A API local informa a localidade do sorteio realizado, mas nao garante localidade futura; para o proximo concurso foi usada a localidade do ultimo concurso disponivel como premissa auditavel.",
     )
 
 
@@ -171,8 +194,23 @@ def build_context_model(concursos: pd.DataFrame, *, draw_hour: int = 20, draw_mi
             f"season:{estacao_do_ano(draw_date)}",
             f"moon:{moon['fase_lua']}",
             f"numerology_date:{digital_root(int(draw_date.strftime('%Y%m%d')))}",
+            f"numerology_concurso:{digital_root(int(row['concurso']))}",
             f"numerology_day_month:{digital_root(int(draw_date.day) + int(draw_date.month))}",
         ]
+        local = normalize_context_text(row.get("local_sorteio", ""))
+        cidade = normalize_context_text(row.get("cidade_sorteio", ""))
+        uf = normalize_context_text(row.get("uf_sorteio", ""))
+        bairro = normalize_context_text(row.get("bairro_sorteio", "")) if "bairro_sorteio" in row.index else ""
+        if local:
+            keys.append(f"local:{local}")
+        if cidade:
+            keys.append(f"cidade:{cidade}")
+        if uf:
+            keys.append(f"uf:{uf}")
+        if bairro:
+            keys.append(f"bairro:{bairro}")
+        if cidade and uf:
+            keys.append(f"cidade_uf:{cidade}|{uf}")
         nums = _nums_from_row(row)
         for key in keys:
             sample_sizes[key] += 1
@@ -215,8 +253,19 @@ def score_contextual_candidate(nums: Sequence[int], model: ContextModel) -> Dict
         "score_estacao": f"season:{target.estacao_do_ano}",
         "score_lua": f"moon:{target.fase_lua}",
         "score_numerologia_data": f"numerology_date:{target.numerologia_data_raiz}",
+        "score_numerologia_concurso": f"numerology_concurso:{target.numerologia_concurso_raiz}",
         "score_numerologia_dia_mes": f"numerology_day_month:{target.numerologia_dia_mes_raiz}",
     }
+    if target.local_sorteio_assumido:
+        keys["score_local_sorteio"] = f"local:{target.local_sorteio_assumido}"
+    if target.cidade_sorteio_assumida:
+        keys["score_cidade_sorteio"] = f"cidade:{target.cidade_sorteio_assumida}"
+    if target.uf_sorteio_assumida:
+        keys["score_uf_sorteio"] = f"uf:{target.uf_sorteio_assumida}"
+    if target.bairro_sorteio_assumido:
+        keys["score_bairro_sorteio"] = f"bairro:{target.bairro_sorteio_assumido}"
+    if target.cidade_sorteio_assumida and target.uf_sorteio_assumida:
+        keys["score_cidade_uf_sorteio"] = f"cidade_uf:{target.cidade_sorteio_assumida}|{target.uf_sorteio_assumida}"
     scores: Dict[str, float] = {}
     for score_name, key in keys.items():
         scores[score_name] = _frequency_score(
@@ -225,20 +274,36 @@ def score_contextual_candidate(nums: Sequence[int], model: ContextModel) -> Dict
             sample_size=int(model.sample_sizes.get(key, 0)),
         )
     scores["score_numerologia"] = _numerology_score(nums, target)
-    score_contextual = round(
+    temporal_score = round(
         0.18 * scores["score_dia_semana"]
         + 0.12 * scores["score_mes"]
         + 0.10 * scores["score_trimestre"]
         + 0.08 * scores["score_semestre"]
         + 0.14 * scores["score_estacao"]
         + 0.18 * scores["score_lua"]
-        + 0.10 * scores["score_numerologia_data"]
-        + 0.05 * scores["score_numerologia_dia_mes"]
+        + 0.06 * scores["score_numerologia_data"]
+        + 0.05 * scores["score_numerologia_concurso"]
+        + 0.04 * scores["score_numerologia_dia_mes"]
         + 0.05 * scores["score_numerologia"],
         6,
     )
+    locality_values = [
+        scores[name]
+        for name in [
+            "score_local_sorteio",
+            "score_cidade_sorteio",
+            "score_uf_sorteio",
+            "score_bairro_sorteio",
+            "score_cidade_uf_sorteio",
+        ]
+        if name in scores
+    ]
+    locality_score = round(float(sum(locality_values) / len(locality_values)), 6) if locality_values else 50.0
+    score_contextual = round(0.82 * temporal_score + 0.18 * locality_score, 6)
     return {
         **scores,
+        "score_contextual_temporal": temporal_score,
+        "score_localidade": locality_score,
         "score_contextual": score_contextual,
         "contexto_data_proximo_concurso": target.data_proximo_concurso,
         "contexto_horario_brasilia": target.horario_brasilia_assumido,
@@ -250,4 +315,9 @@ def score_contextual_candidate(nums: Sequence[int], model: ContextModel) -> Dict
         "contexto_numerologia_data_raiz": target.numerologia_data_raiz,
         "contexto_numerologia_concurso_raiz": target.numerologia_concurso_raiz,
         "contexto_numerologia_dia_mes_raiz": target.numerologia_dia_mes_raiz,
+        "contexto_local_sorteio": target.local_sorteio_assumido,
+        "contexto_cidade_sorteio": target.cidade_sorteio_assumida,
+        "contexto_uf_sorteio": target.uf_sorteio_assumida,
+        "contexto_bairro_sorteio": target.bairro_sorteio_assumido,
+        "contexto_observacao_localidade": target.observacao_localidade,
     }

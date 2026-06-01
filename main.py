@@ -88,6 +88,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--population", type=int, default=80, help="Populacao por geracao do genetico simples.")
     parser.add_argument("--max-overlap-final", type=int, default=8, help="Overlap maximo desejado entre os 2 jogos finais.")
     parser.add_argument("--mode", choices=["rapido", "completo", "experimental"], default="rapido", help="Modo do --predict.")
+    parser.add_argument("--engine", choices=["exaustivo", "heuristico"], default="exaustivo", help="Motor de score para --optimize e --predict.")
+    parser.add_argument("--exhaustive-limit", type=int, default=None, help="Limite tecnico para testar o motor exaustivo; omitido avalia todas as combinacoes.")
     parser.add_argument("--method", default="balanceado_basico", help="Metodo do --generate-games.")
     parser.add_argument("--qty", type=int, default=10, help="Quantidade de jogos do --generate-games.")
     parser.add_argument("--draw-hour", type=int, default=20, help="Hora de Brasilia usada para contexto lunar do proximo sorteio.")
@@ -225,6 +227,8 @@ def main() -> int:
                     population=args.population,
                     draw_hour=args.draw_hour,
                     draw_minute=args.draw_minute,
+                    engine=args.engine,
+                    exhaustive_limit=args.exhaustive_limit,
                 )
             elif args.mode == "experimental":
                 OptimizerPipeline(config=config, logger=logger).run(
@@ -235,6 +239,8 @@ def main() -> int:
                     population=max(args.population, 150),
                     draw_hour=args.draw_hour,
                     draw_minute=args.draw_minute,
+                    engine=args.engine,
+                    exhaustive_limit=args.exhaustive_limit,
                 )
             summary = PredictorPipeline(config=config, logger=logger).predict(
                 seed=args.seed,
@@ -245,6 +251,8 @@ def main() -> int:
                 max_overlap=args.max_overlap_final,
                 draw_hour=args.draw_hour,
                 draw_minute=args.draw_minute,
+                engine=args.engine,
+                exhaustive_limit=args.exhaustive_limit,
             )
         elif args.optimize:
             summary = OptimizerPipeline(config=config, logger=logger).run(
@@ -255,6 +263,8 @@ def main() -> int:
                 population=args.population,
                 draw_hour=args.draw_hour,
                 draw_minute=args.draw_minute,
+                engine=args.engine,
+                exhaustive_limit=args.exhaustive_limit,
             )
         elif args.ml:
             summary = MLPipeline(config=config, logger=logger).run(

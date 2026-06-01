@@ -5,6 +5,7 @@ import logging
 import pandas as pd
 
 from .config import AppConfig
+from .exhaustive_optimizer import build_exhaustive_candidates
 from .optimizer import OptimizerSummary, build_optimized_candidates
 from .storage import load_processed_csv, sanitize_dataframe_for_tabular_output
 
@@ -24,21 +25,32 @@ class OptimizerPipeline:
         population: int,
         draw_hour: int = 20,
         draw_minute: int = 0,
+        engine: str = "exaustivo",
+        exhaustive_limit: int | None = None,
     ) -> OptimizerSummary:
         concursos = load_processed_csv(self.config.processed_csv_path)
         if concursos.empty:
             raise ValueError("Historico local nao encontrado. Rode primeiro: python main.py --update")
 
-        candidates, summary = build_optimized_candidates(
-            concursos,
-            seed=seed,
-            candidate_pool=candidate_pool,
-            top_games=top_games,
-            generations=generations,
-            population=population,
-            draw_hour=draw_hour,
-            draw_minute=draw_minute,
-        )
+        if engine == "exaustivo":
+            candidates, summary = build_exhaustive_candidates(
+                concursos,
+                top_games=max(top_games, 5000),
+                draw_hour=draw_hour,
+                draw_minute=draw_minute,
+                limit_combinations=exhaustive_limit,
+            )
+        else:
+            candidates, summary = build_optimized_candidates(
+                concursos,
+                seed=seed,
+                candidate_pool=candidate_pool,
+                top_games=top_games,
+                generations=generations,
+                population=population,
+                draw_hour=draw_hour,
+                draw_minute=draw_minute,
+            )
         candidates = sanitize_dataframe_for_tabular_output(candidates)
         summary = sanitize_dataframe_for_tabular_output(summary)
 

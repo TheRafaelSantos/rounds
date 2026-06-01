@@ -19,7 +19,7 @@ Fases implementadas:
 9. **Fase 9 - Geracao final de 2 jogos**.
 10. **Fase 10 - Interface local e build de executavel**.
 
-Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos e backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio.
+Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos, backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio e motor exaustivo `ensemble_score_v3_exaustivo`.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -147,6 +147,12 @@ Gerar candidatos com parametros:
 python main.py --optimize --candidate-pool 20000 --top-games 100 --generations 30 --population 100 --seed 123
 ```
 
+Gerar candidatos avaliando todas as 3.268.760 combinacoes possiveis:
+
+```powershell
+python main.py --optimize --engine exaustivo --top-games 5000 --draw-hour 20 --draw-minute 0
+```
+
 Gerar jogos por metodo especifico:
 
 ```powershell
@@ -157,6 +163,12 @@ Gerar exatamente 2 jogos finais:
 
 ```powershell
 python main.py --predict
+```
+
+Gerar os 2 jogos finais com o motor exaustivo:
+
+```powershell
+python main.py --predict --engine exaustivo --draw-hour 20 --draw-minute 0
 ```
 
 Gerar os 2 jogos finais em modo completo, recalculando as fases antes da selecao:
@@ -359,6 +371,12 @@ Esta fase nao usa `scikit-learn` para manter instalacao leve. O objetivo e criar
 
 O comando `python main.py --optimize` gera candidatos ranqueados por score composto.
 
+Por padrao, o motor atual e `ensemble_score_v3_exaustivo`. Ele avalia todas as `3.268.760` combinacoes possiveis da Lotofacil antes de salvar os melhores candidatos. Se precisar voltar ao motor anterior, use:
+
+```powershell
+python main.py --optimize --engine heuristico
+```
+
 Componentes do score:
 
 1. equilibrio estatistico: soma, pares, faixas, repeticao com ultimo concurso e sequencias, usando bandas historicas em vez de alvo fixo;
@@ -370,6 +388,14 @@ Componentes do score:
 7. contrarian: monitora dezenas que os jogos anteriores penalizaram demais, como 01, 13 e 22.
 
 O score final `ensemble_score_v2` combina esses blocos com pesos documentados na aba/CSV de resumo do otimizador. A geracao de candidatos usa perfis variados, incluindo `soma_baixa`, `sequencia_forte`, `visual_forte`, `contrarian_controlado`, `faixa_alta_reforcada`, `assinatura_historica`, `weighted_temporal`, `monte_carlo_filtrado` e `genetico_simples`.
+
+No `ensemble_score_v3_exaustivo`, tambem entram:
+
+1. varredura completa de todas as combinacoes de 15 dezenas entre 25;
+2. fase da lua calculada para todos os concursos historicos com horario de Brasilia configuravel;
+3. numerologia da data, do concurso, do dia+mes e das dezenas;
+4. localidade historica por local, cidade e UF;
+5. bairro somente se existir coluna confiavel na base. Na base atual da CAIXA, bairro nao esta disponivel.
 
 Essa fase gera candidatos para a selecao final. Ela nao afirma que os candidatos sao previsoes garantidas.
 
@@ -403,7 +429,8 @@ Contexto usado na previsao final:
 3. periodo do ano: mes, trimestre, semestre e estacao;
 4. fase, idade e iluminacao aproximada da lua no horario de Brasilia;
 5. numerologia exploratoria da data, do concurso e de dia+mes;
-6. score contextual historico por dia da semana, periodo do ano e fase lunar.
+6. score contextual historico por dia da semana, periodo do ano e fase lunar;
+7. localidade historica do sorteio: local, cidade e UF quando informados pela API da CAIXA.
 
 A API da CAIXA nao informa a hora exata dentro do JSON historico. O sistema usa 20:00 no fuso `America/Sao_Paulo` como padrao configuravel:
 

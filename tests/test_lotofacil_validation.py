@@ -10,6 +10,7 @@ from lotofacil_analytics.auditoria import build_auditoria
 from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
 from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_dezenas_long
+from lotofacil_analytics.exhaustive_optimizer import build_exhaustive_candidates
 from lotofacil_analytics.features_base import build_base_features
 from lotofacil_analytics.games import generate_games
 from lotofacil_analytics.interface_web import _html_page
@@ -269,6 +270,31 @@ class LotofacilValidationTest(unittest.TestCase):
 
         self.assertEqual(len(candidates), 10)
         self.assertFalse(summary.empty)
+        for nums_text in candidates["nums"].tolist():
+            nums = [int(part) for part in nums_text.split()]
+            self.assertEqual(len(nums), 15)
+            self.assertEqual(len(set(nums)), 15)
+            self.assertTrue(all(1 <= n <= 25 for n in nums))
+
+    def test_exhaustive_optimizer_uses_context_and_limited_scan(self) -> None:
+        rows = []
+        for idx in range(1, 14):
+            payload = payload_with_dezenas(idx, cyclic_dezenas(idx))
+            payload["nomeMunicipioUFSorteio"] = "SAO PAULO, SP"
+            payload["localSorteio"] = "ESPAÇO DA SORTE"
+            rows.append(normalize_contest(payload))
+
+        candidates, summary = build_exhaustive_candidates(
+            pd.DataFrame(rows),
+            top_games=5,
+            limit_combinations=200,
+        )
+
+        self.assertEqual(len(candidates), 5)
+        self.assertEqual(set(candidates["source_model"]), {"ensemble_score_v3_exaustivo"})
+        self.assertIn("score_localidade_numerologia", candidates.columns)
+        self.assertIn("contexto_cidade_sorteio", candidates.columns)
+        self.assertEqual(int(summary[summary["metrica"] == "combinacoes_avaliadas"]["valor"].iloc[0]), 200)
         for nums_text in candidates["nums"].tolist():
             nums = [int(part) for part in nums_text.split()]
             self.assertEqual(len(nums), 15)
