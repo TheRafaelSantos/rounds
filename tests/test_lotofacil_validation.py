@@ -22,6 +22,7 @@ from lotofacil_analytics.features_base import build_base_features
 from lotofacil_analytics.games import generate_games
 from lotofacil_analytics.interface_web import _html_page
 from lotofacil_analytics.final_backtest import run_final_score_backtest
+from lotofacil_analytics.mandel_strategy import build_plan_table, choose_strategy_universe, greedy_reduced_closure, run_mandel_strategy
 from lotofacil_analytics.ml_temporal import run_ml_temporal
 from lotofacil_analytics.optimizer import build_optimized_candidates, score_candidate
 from lotofacil_analytics.post_result_analysis import analyze_post_result, parse_numbers
@@ -493,6 +494,56 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertTrue((guard_table["categoria_guarda"] == "risco_falso_negativo").any())
         self.assertGreaterEqual(float(enriched["score_decisao_protegida"].max()), 0.0)
 
+    def test_mandel_strategy_builds_plan_and_reduced_closure(self) -> None:
+        candidates = pd.DataFrame(
+            [
+                {"rank": 1, "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15", "score_final": 99.0, "score_contextual": 65.0, "score_transicao": 80.0},
+                {"rank": 2, "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 16", "score_final": 98.8, "score_contextual": 64.0, "score_transicao": 81.0},
+                {"rank": 3, "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 17", "score_final": 98.6, "score_contextual": 63.0, "score_transicao": 82.0},
+            ]
+        )
+
+        universe = choose_strategy_universe(candidates, universe_size=17)
+        plan = build_plan_table(candidates)
+        games, coverage_pct, complete = greedy_reduced_closure(universe, guarantee_hits=14, max_games=20)
+
+        self.assertEqual(len(universe), 17)
+        self.assertIn("custo_desdobramento_completo", plan.columns)
+        self.assertGreater(len(games), 0)
+        self.assertGreaterEqual(coverage_pct, 0.0)
+        self.assertTrue(complete)
+
+    def test_mandel_strategy_writes_outputs(self) -> None:
+        rows = []
+        for idx in range(1, 14):
+            rows.append(normalize_contest(payload_with_dezenas(idx, cyclic_dezenas(idx))))
+        candidates = pd.DataFrame(
+            [
+                {"rank": 1, "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15", "score_final": 99.0, "score_contextual": 65.0, "score_transicao": 80.0},
+                {"rank": 2, "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 16", "score_final": 98.8, "score_contextual": 64.0, "score_transicao": 81.0},
+                {"rank": 3, "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 17", "score_final": 98.6, "score_contextual": 63.0, "score_transicao": 82.0},
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            summary = run_mandel_strategy(
+                pd.DataFrame(rows),
+                candidates,
+                universe_size=17,
+                guarantee_hits=14,
+                max_reduced_games=20,
+                plan_csv_path=base / "plan.csv",
+                games_csv_path=base / "games.csv",
+                report_path=base / "report.md",
+                excel_path=base / "mandel.xlsx",
+            )
+
+            self.assertTrue((base / "plan.csv").exists())
+            self.assertTrue((base / "games.csv").exists())
+            self.assertTrue((base / "report.md").exists())
+            self.assertTrue((base / "mandel.xlsx").exists())
+            self.assertEqual(summary.tamanho_universo, 17)
+
     def test_web_interface_html_contains_expected_controls(self) -> None:
         html = _html_page()
         self.assertIn("Lotofacil Analytics", html)
@@ -500,7 +551,9 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("/api/transitions", html)
         self.assertIn("/api/predict", html)
         self.assertIn("/api/predict-single", html)
+        self.assertIn("/api/mandel", html)
         self.assertIn("/report", html)
+        self.assertIn("/mandel-report", html)
         self.assertIn("Comparação visual dos scores", html)
         self.assertIn("score_portfolio_jogo_2", html)
         self.assertIn("Decisão protegida", html)

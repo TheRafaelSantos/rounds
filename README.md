@@ -19,6 +19,7 @@ Fases implementadas:
 9. **Fase 9 - Geracao final de 2 jogos**.
 10. **Fase 10 - Interface local e build de executavel**.
 11. **Camada superior - jogo unico, validacao exaustiva, ablation test e ajuste de pesos**.
+12. **Camada Mandel/bolao - universo recomendado, desdobramento completo e fechamento reduzido**.
 
 Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos, backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio, motor exaustivo `ensemble_score_v4_exaustivo_transicao` e camada de decisao acima do motor atual.
 
@@ -190,6 +191,12 @@ Gerar 1 jogo unico pela camada superior de decisao:
 python main.py --predict-single --engine exaustivo --draw-hour 20 --draw-minute 0
 ```
 
+Gerar plano Mandel/bolao com desdobramento e fechamento reduzido:
+
+```powershell
+python main.py --mandel --mandel-universe-size 18 --mandel-guarantee-hits 14 --mandel-max-reduced-games 80 --draw-hour 20 --draw-minute 0
+```
+
 Backtest walk-forward do jogo unico exaustivo:
 
 ```powershell
@@ -270,6 +277,8 @@ data/processed/lotofacil_ablation_test_summary.csv
 data/processed/lotofacil_tune_weights_results.csv
 data/processed/lotofacil_tune_weights_summary.csv
 data/processed/lotofacil_tuned_weights.json
+data/processed/lotofacil_mandel_plan.csv
+data/processed/lotofacil_mandel_games.csv
 data/processed/lotofacil_jogos_gerados.csv
 data/processed/lotofacil_prediction.csv
 data/processed/lotofacil_pos_sorteio_jogos_<rotulo>.csv
@@ -287,6 +296,8 @@ data/exports/lotofacil_optimizer.xlsx
 data/exports/lotofacil_jogos_gerados.xlsx
 data/exports/lotofacil_prediction.xlsx
 data/exports/lotofacil_prediction_report.md
+data/exports/lotofacil_mandel.xlsx
+data/exports/lotofacil_mandel_report.md
 data/exports/lotofacil_pos_sorteio_<rotulo>.xlsx
 data/exports/lotofacil_pos_sorteio_report_<rotulo>.md
 data/exports/lotofacil_analytics_completo.xlsx
@@ -529,6 +540,35 @@ Para testes rapidos de validacao tecnica, use `--exhaustive-limit`. Para varredu
 python main.py --backtest-exhaustive --validation-n-eval 1 --min-history 300 --exhaustive-limit 50000
 ```
 
+## Camada Mandel / bolao
+
+Essa camada aplica no projeto a parte util e auditavel do metodo associado a Stefan Mandel: cobertura combinatoria. Ela nao tenta criar uma "formula magica"; ela organiza custo, universo de dezenas e quantidade de jogos para aumentar cobertura quando voce pretende jogar em grupo.
+
+O sistema faz assim:
+
+1. usa o motor exaustivo atual para escolher um universo recomendado de 15 a 20 dezenas;
+2. calcula o desdobramento completo desse universo;
+3. calcula o custo teorico por quantidade de jogos, usando R$ 3,50 por aposta simples;
+4. monta um fechamento reduzido guloso para cobrir o maximo possivel de cenarios dentro do universo;
+5. salva CSV, Markdown e Excel para conferencia.
+
+Comando recomendado:
+
+```powershell
+python main.py --mandel --mandel-universe-size 18 --mandel-guarantee-hits 14 --mandel-max-reduced-games 80 --draw-hour 20 --draw-minute 0
+```
+
+Saidas:
+
+1. `data/processed/lotofacil_mandel_plan.csv`: tabela de custo para universos de 15 a 20 dezenas;
+2. `data/processed/lotofacil_mandel_games.csv`: jogos do fechamento reduzido;
+3. `data/exports/lotofacil_mandel_report.md`: explicacao tecnica;
+4. `data/exports/lotofacil_mandel.xlsx`: Excel com plano, jogos e dezenas protegidas.
+
+Limite importante: o desdobramento completo de 18 dezenas gera 816 jogos. Ele so garante 15 pontos se as 15 dezenas sorteadas estiverem dentro das 18 dezenas escolhidas. O fechamento reduzido troca custo menor por garantia menor ou condicional.
+
+Comprar todas as combinacoes da Lotofacil exigiria 3.268.760 jogos. Com aposta simples de R$ 3,50, o custo teorico seria R$ 11.440.660,00, fora logistica, limite operacional, rateio de premio e risco de nao haver retorno financeiro.
+
 ## Analise de transicoes
 
 O comando `python main.py --transitions` compara o concurso 1 contra o 2, o 2 contra o 3, e assim por diante ate o concurso mais recente.
@@ -642,7 +682,7 @@ Depois abra no navegador:
 http://127.0.0.1:8765
 ```
 
-A tela local permite atualizar a base, analisar transicoes, gerar 2 jogos, gerar o jogo unico da camada superior e baixar os relatorios correspondentes.
+A tela local permite atualizar a base, analisar transicoes, gerar 2 jogos, gerar o jogo unico da camada superior, gerar o plano Mandel/bolao e baixar os relatorios correspondentes.
 
 Ao gerar 2 jogos, a interface mostra a comparacao visual dos scores dos dois jogos. O Jogo 2 tambem exibe o `score_portfolio_jogo_2`, o overlap contra o Jogo 1 e as dezenas exclusivas usadas para diversificar a sugestao.
 

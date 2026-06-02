@@ -12,6 +12,7 @@ import pandas as pd
 
 from .config import AppConfig
 from .decision_layer_pipeline import DecisionLayerPipeline
+from .mandel_pipeline import MandelPipeline
 from .pipeline import LotofacilPipeline
 from .predictor_pipeline import PredictorPipeline
 from .transition_pipeline import TransitionPipeline
@@ -78,8 +79,10 @@ def _html_page() -> str:
     <button onclick="transitions()">Analisar transições</button>
     <button onclick="predictSingle()">Gerar jogo unico</button>
     <button onclick="predict()">Gerar 2 jogos</button>
+    <button onclick="mandel()">Plano Mandel/bolão</button>
     <button onclick="window.location='/report'">Baixar relatorio</button>
     <button onclick="window.location='/single-report'">Baixar relatorio jogo unico</button>
+    <button onclick="window.location='/mandel-report'">Baixar relatorio Mandel</button>
   </div>
   <section class="games" id="games"></section>
   <pre id="output">Pronto.</pre>
@@ -184,6 +187,35 @@ def _html_page() -> str:
         '</div>' +
       '</section>';
     }
+    function renderMandel(data) {
+      const plan = Array.isArray(data.plan) ? data.plan : [];
+      const preview = Array.isArray(data.games_preview) ? data.games_preview : [];
+      const rows = plan.map(function(item) {
+        return '<div class="compare-row">' +
+          '<div class="compare-title">' + escapeHtml(item.tamanho_universo) + ' dezenas</div>' +
+          '<div>' + escapeHtml(item.jogos_desdobramento_completo) + ' jogos</div>' +
+          '<div>R$ ' + Number(item.custo_desdobramento_completo || 0).toLocaleString('pt-BR', {minimumFractionDigits: 2}) + '</div>' +
+        '</div>';
+      }).join('');
+      const previewRows = preview.map(function(item) {
+        return '<div class="exclusives"><strong>Jogo ' + escapeHtml(item.jogo) + ':</strong> ' + escapeHtml(item.nums) + '</div>';
+      }).join('');
+      return '<article class="game">' +
+        '<div class="game-head"><h2>Plano Mandel/bolão</h2><span class="tag">desdobramento</span></div>' +
+        '<div class="numbers">' + escapeHtml(data.universo_recomendado || '') + '</div>' +
+        '<div class="meta">' +
+          metaItem('Concurso', data.concurso_alvo) +
+          metaItem('Universo', data.tamanho_universo) +
+          metaItem('Completo', data.jogos_desdobramento_completo + ' jogos') +
+          metaItem('Custo completo', 'R$ ' + Number(data.custo_desdobramento_completo || 0).toLocaleString('pt-BR', {minimumFractionDigits: 2})) +
+          metaItem('Reduzido', data.jogos_fechamento_reduzido + ' jogos') +
+          metaItem('Custo reduzido', 'R$ ' + Number(data.custo_fechamento_reduzido || 0).toLocaleString('pt-BR', {minimumFractionDigits: 2})) +
+        '</div>' +
+        '<div class="exclusives"><strong>Garantia:</strong> ' + escapeHtml(data.garantia_fechamento_reduzido || '') + '</div>' +
+      '</article>' +
+      '<section class="comparison"><h2>Custos por universo</h2><div class="compare-grid">' + rows + '</div></section>' +
+      '<section class="comparison"><h2>Primeiros jogos do fechamento</h2>' + previewRows + '</section>';
+    }
     async function request(path, options) {
       const output = document.getElementById('output');
       output.textContent = 'Processando...';
@@ -195,6 +227,15 @@ def _html_page() -> str:
     async function status() { await request('/api/status'); }
     async function updateBase() { await request('/api/update', {method: 'POST'}); }
     async function transitions() { await request('/api/transitions', {method: 'POST'}); }
+    async function mandel() {
+      const data = await request('/api/mandel', {method: 'POST'});
+      const games = document.getElementById('games');
+      if (data.universo_recomendado) {
+        games.innerHTML = renderMandel(data);
+      } else {
+        games.innerHTML = '';
+      }
+    }
     async function predict() {
       const data = await request('/api/predict', {method: 'POST'});
       const games = document.getElementById('games');
@@ -312,6 +353,19 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if self.path == "/mandel-report":
+                report_path = config.mandel_report_path
+                if not report_path.exists():
+                    _json_response(self, HTTPStatus.NOT_FOUND, {"error": "relatorio ainda nao gerado; use Plano Mandel/bolao primeiro"})
+                    return
+                body = report_path.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="lotofacil_mandel_report.md"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})
 
         def do_POST(self) -> None:
@@ -320,6 +374,22 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 return
             if self.path == "/api/transitions":
                 self._handle_json(lambda: TransitionPipeline(config=config, logger=logger).run().__dict__)
+                return
+            if self.path == "/api/mandel":
+                def mandel_payload() -> dict:
+                    summary = MandelPipeline(config=config, logger=logger).run(
+                        universe_size=18,
+                        guarantee_hits=14,
+                        max_reduced_games=80,
+                        draw_hour=20,
+                        draw_minute=0,
+                    )
+                    payload = summary.__dict__.copy()
+                    payload["plan"] = _read_csv_records(config.mandel_plan_csv_path)
+                    payload["games_preview"] = _read_csv_records(config.mandel_games_csv_path)[:20]
+                    return payload
+
+                self._handle_json(mandel_payload)
                 return
             if self.path == "/api/predict":
                 def predict_payload() -> dict:

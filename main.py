@@ -23,6 +23,7 @@ from lotofacil_analytics.final_backtest_pipeline import FinalBacktestPipeline
 from lotofacil_analytics.features_pipeline import FeaturePipeline
 from lotofacil_analytics.games_pipeline import GeneratedGamesPipeline
 from lotofacil_analytics.logger import setup_logger
+from lotofacil_analytics.mandel_pipeline import MandelPipeline
 from lotofacil_analytics.ml_pipeline import MLPipeline
 from lotofacil_analytics.optimizer_pipeline import OptimizerPipeline
 from lotofacil_analytics.pipeline import LotofacilPipeline
@@ -63,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--optimize", action="store_true", help="Gera candidatos otimizados da Fase 8.")
     mode.add_argument("--predict", action="store_true", help="Gera exatamente 2 jogos finais da Fase 9.")
     mode.add_argument("--predict-single", action="store_true", help="Gera 1 jogo unico pela camada superior de decisao.")
+    mode.add_argument("--mandel", action="store_true", help="Gera plano Mandel/bolao com desdobramento e fechamento reduzido.")
     mode.add_argument("--backtest-exhaustive", action="store_true", help="Backtest walk-forward do jogo unico exaustivo.")
     mode.add_argument("--ablation-test", action="store_true", help="Mede impacto de remover familias de score do motor exaustivo.")
     mode.add_argument("--tune-weights", action="store_true", help="Testa perfis de pesos e salva o melhor perfil observado.")
@@ -99,6 +101,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--engine", choices=["exaustivo", "heuristico"], default="exaustivo", help="Motor de score para --optimize e --predict.")
     parser.add_argument("--exhaustive-limit", type=int, default=None, help="Limite tecnico para testar o motor exaustivo; omitido avalia todas as combinacoes.")
     parser.add_argument("--weight-profile", choices=sorted(WEIGHT_PROFILE_PRESETS), default="padrao_atual", help="Perfil de pesos da camada superior.")
+    parser.add_argument("--mandel-universe-size", type=int, default=18, help="Quantidade de dezenas no universo Mandel, entre 15 e 20.")
+    parser.add_argument("--mandel-guarantee-hits", type=int, default=14, help="Garantia condicional alvo do fechamento reduzido, entre 11 e 15.")
+    parser.add_argument("--mandel-max-reduced-games", type=int, default=80, help="Maximo de jogos no fechamento reduzido Mandel.")
     parser.add_argument("--validation-n-eval", type=int, default=3, help="Concursos finais avaliados nos comandos de validacao da camada superior.")
     parser.add_argument("--method", default="balanceado_basico", help="Metodo do --generate-games.")
     parser.add_argument("--qty", type=int, default=10, help="Quantidade de jogos do --generate-games.")
@@ -122,6 +127,12 @@ def main() -> int:
     args = parser.parse_args()
     if not (0 <= int(args.draw_hour) <= 23 and 0 <= int(args.draw_minute) <= 59):
         parser.error("--draw-hour deve estar entre 0 e 23 e --draw-minute entre 0 e 59.")
+    if not (15 <= int(args.mandel_universe_size) <= 20):
+        parser.error("--mandel-universe-size deve estar entre 15 e 20.")
+    if not (11 <= int(args.mandel_guarantee_hits) <= 15):
+        parser.error("--mandel-guarantee-hits deve estar entre 11 e 15.")
+    if int(args.mandel_max_reduced_games) <= 0:
+        parser.error("--mandel-max-reduced-games deve ser maior que zero.")
 
     if not (
         args.update
@@ -137,6 +148,7 @@ def main() -> int:
         or args.optimize
         or args.predict
         or args.predict_single
+        or args.mandel
         or args.backtest_exhaustive
         or args.ablation_test
         or args.tune_weights
@@ -221,6 +233,14 @@ def main() -> int:
                 engine=args.engine,
                 exhaustive_limit=args.exhaustive_limit,
                 weight_profile=args.weight_profile,
+            )
+        elif args.mandel:
+            summary = MandelPipeline(config=config, logger=logger).run(
+                universe_size=args.mandel_universe_size,
+                guarantee_hits=args.mandel_guarantee_hits,
+                max_reduced_games=args.mandel_max_reduced_games,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
             )
         elif args.backtest_exhaustive:
             summary = DecisionLayerPipeline(config=config, logger=logger).backtest_exhaustive(

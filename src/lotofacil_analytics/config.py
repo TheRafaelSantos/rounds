@@ -191,6 +191,22 @@ class AppConfig:
         return self.exports_dir / "lotofacil_prediction_single.xlsx"
 
     @property
+    def mandel_plan_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_mandel_plan.csv"
+
+    @property
+    def mandel_games_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_mandel_games.csv"
+
+    @property
+    def mandel_report_path(self) -> Path:
+        return self.exports_dir / "lotofacil_mandel_report.md"
+
+    @property
+    def mandel_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_mandel.xlsx"
+
+    @property
     def generated_games_csv_path(self) -> Path:
         return self.processed_dir / "lotofacil_jogos_gerados.csv"
 
