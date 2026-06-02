@@ -118,14 +118,20 @@ def _html_page() -> str:
       const criterio = data.criterio_selecao ? '<span class="tag">' + escapeHtml(data.criterio_selecao) + '</span>' : '';
       const metrics = [
         metricBar('Score final', data.score_final, false),
+        metricBar('Decisão protegida', data.score_decisao_protegida, true),
         metricBar('Score contextual', data.score_contextual, false),
+        metricBar('Contexto protegido', data.score_contexto_protegido, true),
         metricBar('Score transição', data.score_transicao, false),
+        metricBar('Anti-falso-negativo', data.score_cobertura_risco_falso_negativo, true),
         isSecond ? metricBar('Score portfólio', data.score_portfolio_jogo_2, true) : '',
         isSecond ? metricBar('Diversidade vs Jogo 1', data.score_diversidade_jogo_2, true) : '',
         isSecond ? metricBar('Força dos componentes', data.score_forca_componentes_jogo_2, true) : ''
       ].join('');
       const exclusives = isSecond && data.dezenas_exclusivas_jogo_2
         ? '<div class="exclusives"><strong>Dezenas exclusivas do Jogo 2:</strong> ' + escapeHtml(data.dezenas_exclusivas_jogo_2) + '</div>'
+        : '';
+      const risk = data.dezenas_risco_falso_negativo
+        ? '<div class="exclusives"><strong>Dezenas de risco protegidas:</strong> ' + escapeHtml(data.dezenas_risco_falso_negativo) + '</div>'
         : '';
       return '<article class="game">' +
         '<div class="game-head"><h2>' + escapeHtml(title) + '</h2>' + criterio + '</div>' +
@@ -137,8 +143,10 @@ def _html_page() -> str:
           metaItem('Soma', data.soma) +
           metaItem('Pares', data.qtd_pares) +
           metaItem('Repetidas último', data.overlap_ultimo) +
+          metaItem('Risco falso negativo', data.qtd_dezenas_risco_falso_negativo) +
         '</div>' +
         '<div class="metrics">' + metrics + '</div>' +
+        risk +
         exclusives +
       '</article>';
     }
@@ -167,8 +175,11 @@ def _html_page() -> str:
         '<h2>Comparação visual dos scores</h2>' +
         '<div class="compare-grid">' +
           compareRow('Score final', first.score_final, second.score_final) +
+          compareRow('Decisão protegida', first.score_decisao_protegida, second.score_decisao_protegida) +
           compareRow('Score contextual', first.score_contextual, second.score_contextual) +
+          compareRow('Contexto protegido', first.score_contexto_protegido, second.score_contexto_protegido) +
           compareRow('Score transição', first.score_transicao, second.score_transicao) +
+          compareRow('Anti-falso-negativo', first.score_cobertura_risco_falso_negativo, second.score_cobertura_risco_falso_negativo) +
           compareRow('Score portfólio', null, second.score_portfolio_jogo_2) +
         '</div>' +
       '</section>';

@@ -20,6 +20,7 @@ from .exhaustive_optimizer import (
 from .optimizer import build_optimized_candidates
 from .post_result_analysis import format_nums, parse_numbers
 from .predictor import AVISO_TECNICO
+from .selection_guard import select_guarded_best_candidate
 
 
 SOURCE_MODEL_EXAUSTIVO = EXHAUSTIVE_SOURCE_MODEL
@@ -142,6 +143,7 @@ class SinglePredictionSummary:
     weight_profile: str
     jogo_unico: str
     score_final: float
+    score_decisao_protegida: float
     prediction_csv_path: str
     report_path: str
     excel_path: str
@@ -160,6 +162,7 @@ class SinglePredictionSummary:
                 f"Perfil de pesos: {self.weight_profile}",
                 f"Jogo unico principal: {self.jogo_unico}",
                 f"Score final: {self.score_final:.6f}",
+                f"Score decisao protegida: {self.score_decisao_protegida:.6f}",
                 f"Aviso: {AVISO_TECNICO}",
                 f"CSV: {self.prediction_csv_path}",
                 f"Relatorio tecnico: {self.report_path}",
@@ -231,17 +234,17 @@ def _summary_value(summary: pd.DataFrame, metric: str, default: object = None) -
 
 
 def _best_candidate(candidates: pd.DataFrame) -> pd.Series:
-    if candidates.empty:
-        raise ValueError("Nenhum candidato disponivel para selecionar o jogo unico.")
-    if "nums" not in candidates.columns or "score_final" not in candidates.columns:
-        raise ValueError("Tabela de candidatos precisa ter colunas nums e score_final.")
-    ranked = candidates.copy().sort_values(["score_final", "nums"], ascending=[False, True]).reset_index(drop=True)
-    best = ranked.iloc[0].copy()
+    best = select_guarded_best_candidate(candidates)
     parse_numbers(str(best["nums"]))
     return best
 
 
-def _has_default_exhaustive_candidates(existing_candidates: pd.DataFrame | None) -> bool:
+def _has_default_exhaustive_candidates(
+    existing_candidates: pd.DataFrame | None,
+    *,
+    expected_base_final: int | None = None,
+    expected_target_date: str | None = None,
+) -> bool:
     if existing_candidates is None or existing_candidates.empty:
         return False
     required = {"nums", "score_final", "source_model", "score_contextual", "contexto_fase_lua", "score_transicao"}
@@ -252,7 +255,20 @@ def _has_default_exhaustive_candidates(existing_candidates: pd.DataFrame | None)
     max_evaluated = pd.to_numeric(existing_candidates["total_combinacoes_avaliadas"], errors="coerce").max()
     if pd.isna(max_evaluated) or int(max_evaluated) < TOTAL_COMBINATIONS:
         return False
-    return str(existing_candidates["source_model"].iloc[0]) == SOURCE_MODEL_EXAUSTIVO
+    if str(existing_candidates["source_model"].iloc[0]) != SOURCE_MODEL_EXAUSTIVO:
+        return False
+    if expected_base_final is not None:
+        if "concurso_base_final" not in existing_candidates.columns:
+            return False
+        candidate_base_final = pd.to_numeric(existing_candidates["concurso_base_final"], errors="coerce").max()
+        if pd.isna(candidate_base_final) or int(candidate_base_final) != int(expected_base_final):
+            return False
+    if expected_target_date is not None:
+        if "contexto_data_proximo_concurso" not in existing_candidates.columns:
+            return False
+        if str(existing_candidates["contexto_data_proximo_concurso"].iloc[0]) != str(expected_target_date):
+            return False
+    return True
 
 
 def _candidate_rows_to_single_output(
@@ -305,15 +321,26 @@ def _candidate_rows_to_single_output(
         "jogo",
         "nums",
         "score_final",
+        "score_decisao_protegida",
         "score_estatistico",
         "score_historico",
         "score_atraso",
         "score_combinatorio",
         "score_contextual",
+        "score_contexto_protegido",
+        "score_consenso_top",
+        "score_cobertura_risco_falso_negativo",
+        "qtd_dezenas_risco_falso_negativo",
+        "dezenas_risco_falso_negativo",
+        "score_cobertura_nucleo_consenso",
+        "qtd_dezenas_nucleo_consenso",
+        "dezenas_nucleo_consenso",
         "score_localidade_numerologia",
         "score_cenarios",
         "score_contrarian",
         "score_transicao",
+        "criterio_contexto_protegido",
+        "criterio_selecao",
         "source_model",
         "metodo",
         "aviso",
@@ -357,16 +384,20 @@ def build_single_prediction_report(
         "",
         "## Jogo unico selecionado",
         "",
-        f"- Jogo unico: {row['nums']} | score_final={float(row['score_final']):.6f} | score_transicao={float(row.get('score_transicao', 0)):.6f}",
+        f"- Jogo unico: {row['nums']} | score_final={float(row['score_final']):.6f} | score_decisao_protegida={float(row.get('score_decisao_protegida', 0)):.6f} | score_transicao={float(row.get('score_transicao', 0)):.6f}",
+        f"- Contexto protegido: score_contextual={float(row.get('score_contextual', 0)):.6f}; score_contexto_protegido={float(row.get('score_contexto_protegido', 0)):.6f}; criterio={row.get('criterio_contexto_protegido', '-')}",
+        f"- Anti-falso-negativo: {int(float(row.get('qtd_dezenas_risco_falso_negativo', 0) or 0))} dezenas de risco no jogo ({row.get('dezenas_risco_falso_negativo', '')})",
         "",
         "## O que esta camada faz",
         "",
         "1. Mantem o score exaustivo atual como base.",
-        "2. Seleciona apenas o melhor jogo completo de 15 dezenas.",
+        "2. Seleciona apenas um jogo completo de 15 dezenas usando a decisao protegida.",
         "3. Explicita o perfil de pesos usado.",
         "4. Mantem lua, numerologia, localidade, periodo do ano, dia da semana, historico, atrasos, combinacoes, cenarios e contrarian no score.",
         "5. Adiciona transicao historica concurso a concurso: repetidas, entradas, saidas e mudanca estrutural.",
-        "6. Nao divide a previsao entre dois jogos.",
+        "6. Usa contexto protegido: lua, numerologia, dia da semana e localidade viram bonus, mas nao excluem sozinhos dezenas fortes por outros sinais.",
+        "7. Usa anti-falso-negativo: protege dezenas menos consensuais que aparecem em candidatos fortes para reduzir exclusao total.",
+        "8. Nao divide a previsao entre dois jogos.",
         "",
         f"Combinacoes possiveis avaliaveis da Lotofacil: {TOTAL_COMBINATIONS}.",
         f"Aviso: {AVISO_TECNICO}",
@@ -403,7 +434,15 @@ def build_single_prediction(
     weights = weights_for_profile(weight_profile)
 
     if engine == "exaustivo":
-        if weight_profile == "padrao_atual" and exhaustive_limit is None and _has_default_exhaustive_candidates(existing_candidates):
+        if (
+            weight_profile == "padrao_atual"
+            and exhaustive_limit is None
+            and _has_default_exhaustive_candidates(
+                existing_candidates,
+                expected_base_final=last_concurso,
+                expected_target_date=target_context.data_proximo_concurso,
+            )
+        ):
             candidates = existing_candidates.copy()
         else:
             candidates, _summary = build_exhaustive_candidates(
@@ -466,6 +505,7 @@ def build_single_prediction(
         weight_profile=weight_profile,
         jogo_unico=str(output.loc[0, "nums"]),
         score_final=float(output.loc[0, "score_final"]),
+        score_decisao_protegida=float(output.loc[0].get("score_decisao_protegida", output.loc[0, "score_final"])),
         prediction_csv_path=str(prediction_csv_path),
         report_path=str(report_path),
         excel_path=str(excel_path),

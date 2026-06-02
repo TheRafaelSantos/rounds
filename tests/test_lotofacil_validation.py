@@ -26,6 +26,7 @@ from lotofacil_analytics.ml_temporal import run_ml_temporal
 from lotofacil_analytics.optimizer import build_optimized_candidates, score_candidate
 from lotofacil_analytics.post_result_analysis import analyze_post_result, parse_numbers
 from lotofacil_analytics.predictor import select_final_games
+from lotofacil_analytics.selection_guard import build_number_guard_table, enrich_candidates_with_decision_guard
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.transition_analysis import build_transition_model, build_transition_outputs, score_transition_candidate
 from lotofacil_analytics.validators import DataValidationError, validate_contest_record, validate_dataset
@@ -472,6 +473,26 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("score_diversidade_jogo_2", final_games.columns)
         self.assertEqual(final_games.loc[1, "criterio_selecao"], "portfolio_inteligente_overlap<=8")
 
+    def test_decision_guard_marks_risk_numbers_and_enriches_candidates(self) -> None:
+        candidates = pd.DataFrame(
+            [
+                {"rank": 1, "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15", "score_final": 99.0, "score_contextual": 65.0, "score_transicao": 80.0},
+                {"rank": 2, "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 16", "score_final": 98.8, "score_contextual": 64.0, "score_transicao": 81.0},
+                {"rank": 3, "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 17", "score_final": 98.6, "score_contextual": 63.0, "score_transicao": 82.0},
+                {"rank": 4, "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 18", "score_final": 98.4, "score_contextual": 62.0, "score_transicao": 83.0},
+                {"rank": 5, "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 19", "score_final": 98.2, "score_contextual": 61.0, "score_transicao": 84.0},
+            ]
+        )
+
+        guard_table = build_number_guard_table(candidates, consensus_top=3)
+        enriched = enrich_candidates_with_decision_guard(candidates, consensus_top=3)
+
+        self.assertIn("score_decisao_protegida", enriched.columns)
+        self.assertIn("score_contexto_protegido", enriched.columns)
+        self.assertIn("score_cobertura_risco_falso_negativo", enriched.columns)
+        self.assertTrue((guard_table["categoria_guarda"] == "risco_falso_negativo").any())
+        self.assertGreaterEqual(float(enriched["score_decisao_protegida"].max()), 0.0)
+
     def test_web_interface_html_contains_expected_controls(self) -> None:
         html = _html_page()
         self.assertIn("Lotofacil Analytics", html)
@@ -482,6 +503,8 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("/report", html)
         self.assertIn("Comparação visual dos scores", html)
         self.assertIn("score_portfolio_jogo_2", html)
+        self.assertIn("Decisão protegida", html)
+        self.assertIn("Anti-falso-negativo", html)
 
     def test_generate_games_balanceado_returns_requested_quantity(self) -> None:
         rows = []

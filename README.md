@@ -490,6 +490,14 @@ Os dois jogos gerados sao sempre jogos completos de 15 dezenas. O sistema nao di
 
 Essa camada nao substitui as analises existentes. Ela fica por cima do motor `ensemble_score_v4_exaustivo_transicao` e usa os mesmos blocos: estatistica, historico, atrasos, combinacoes, lua, dia da semana, periodo do ano, numerologia, localidade, cenarios, contrarian e transicao sequencial.
 
+Na selecao final, a camada superior agora aplica uma decisao protegida:
+
+1. `score_decisao_protegida`: combina o score final do motor com transicao, contexto protegido, consenso do top de candidatos e cobertura anti-falso-negativo;
+2. `score_contexto_protegido`: lua, numerologia, dia da semana e localidade continuam entrando, mas viram bonus de ajuste fino; eles nao devem derrubar sozinhos um candidato forte por outros sinais;
+3. `score_cobertura_risco_falso_negativo`: mede quantas dezenas menos consensuais, mas presentes em candidatos fortes, foram preservadas no jogo;
+4. `dezenas_risco_falso_negativo`: lista as dezenas protegidas para reduzir o risco de ficarem fora do jogo unico e dos jogos finais;
+5. `dezenas_nucleo_consenso`: mostra o nucleo que aparece com mais forca no top de candidatos.
+
 Comandos principais:
 
 1. `python main.py --predict-single`: escolhe apenas o jogo mais bem ranqueado, como um unico conjunto completo de 15 dezenas.
@@ -637,6 +645,8 @@ http://127.0.0.1:8765
 A tela local permite atualizar a base, analisar transicoes, gerar 2 jogos, gerar o jogo unico da camada superior e baixar os relatorios correspondentes.
 
 Ao gerar 2 jogos, a interface mostra a comparacao visual dos scores dos dois jogos. O Jogo 2 tambem exibe o `score_portfolio_jogo_2`, o overlap contra o Jogo 1 e as dezenas exclusivas usadas para diversificar a sugestao.
+
+Ao gerar jogo unico ou 2 jogos, a interface tambem mostra `Decisao protegida`, `Contexto protegido` e `Anti-falso-negativo`. Esses campos explicam quando a camada final manteve uma dezena por consenso, transicao ou risco de exclusao, mesmo se lua/numerologia/dia/localidade nao favorecerem totalmente aquela combinacao.
 
 Build de executavel:
 

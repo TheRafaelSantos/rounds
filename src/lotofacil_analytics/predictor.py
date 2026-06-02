@@ -10,6 +10,7 @@ import pandas as pd
 from .context_features import TargetContext, build_target_context
 from .exhaustive_optimizer import EXHAUSTIVE_SOURCE_MODEL, TOTAL_COMBINATIONS, build_exhaustive_candidates
 from .optimizer import build_optimized_candidates
+from .selection_guard import enrich_candidates_with_decision_guard
 
 
 AVISO_TECNICO = "Sugestoes matematicas/estatisticas; nao existe garantia de acerto em sorteios aleatorios."
@@ -114,14 +115,22 @@ def _portfolio_metrics_for_second(row: pd.Series, first_nums: Sequence[int]) -> 
         6,
     )
     final_score = _safe_float(row, "score_final")
+    decision_score = _safe_float(row, "score_decisao_protegida", final_score)
     transition_score = _safe_float(row, "score_transicao", final_score)
-    contextual_score = _safe_float(row, "score_contextual", _safe_float(row, "score_localidade_numerologia", final_score))
+    contextual_score = _safe_float(
+        row,
+        "score_contexto_protegido",
+        _safe_float(row, "score_contextual", _safe_float(row, "score_localidade_numerologia", final_score)),
+    )
+    risk_coverage_score = _safe_float(row, "score_cobertura_risco_falso_negativo")
     portfolio_score = round(
-        (final_score * 0.58)
-        + (transition_score * 0.14)
-        + (contextual_score * 0.10)
-        + (diversity_score * 0.12)
-        + (strength_score * 0.06),
+        (decision_score * 0.42)
+        + (final_score * 0.18)
+        + (transition_score * 0.12)
+        + (contextual_score * 0.08)
+        + (diversity_score * 0.10)
+        + (strength_score * 0.05)
+        + (risk_coverage_score * 0.05),
         6,
     )
     return {
@@ -141,10 +150,20 @@ def select_final_games(candidates: pd.DataFrame, *, max_overlap: int = 10) -> pd
     if "nums" not in candidates.columns or "score_final" not in candidates.columns:
         raise ValueError("Tabela de candidatos precisa ter colunas nums e score_final.")
 
-    ranked = candidates.copy().sort_values(["score_final", "nums"], ascending=[False, True]).reset_index(drop=True)
+    enriched_candidates = enrich_candidates_with_decision_guard(candidates)
+    top_score = pd.to_numeric(enriched_candidates["score_final"], errors="coerce").max()
+    eligible_first = enriched_candidates[
+        pd.to_numeric(enriched_candidates["score_final"], errors="coerce") >= float(top_score) - 1.2
+    ].copy()
+    if eligible_first.empty:
+        eligible_first = enriched_candidates.copy()
+    ranked = eligible_first.sort_values(
+        ["score_decisao_protegida", "score_final", "nums"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
     first = ranked.iloc[0].copy()
     first_nums = _parse_nums(first["nums"])
-    first["criterio_selecao"] = "principal_rank_1"
+    first["criterio_selecao"] = "principal_decisao_protegida"
     first["overlap_com_jogo_1"] = 15
     first["dezenas_unicas_vs_jogo_1"] = 0
     first["dezenas_exclusivas_jogo_2"] = ""
@@ -154,7 +173,11 @@ def select_final_games(candidates: pd.DataFrame, *, max_overlap: int = 10) -> pd
     first["score_portfolio_jogo_2"] = pd.NA
 
     eligible_second_rows: List[pd.Series] = []
-    for _, row in ranked.iloc[1:].iterrows():
+    ranked_second_pool = enriched_candidates.sort_values(
+        ["score_decisao_protegida", "score_final", "nums"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+    for _, row in ranked_second_pool.iterrows():
         nums = _parse_nums(row["nums"])
         if nums != first_nums and _overlap(first_nums, nums) <= int(max_overlap):
             enriched = row.copy()
@@ -172,7 +195,7 @@ def select_final_games(candidates: pd.DataFrame, *, max_overlap: int = 10) -> pd
     else:
         second = None
     if second is None:
-        for _, row in ranked.iloc[1:].iterrows():
+        for _, row in ranked_second_pool.iterrows():
             nums = _parse_nums(row["nums"])
             if nums != first_nums:
                 second = row.copy()
@@ -230,8 +253,11 @@ def build_prediction_report(
         parts = [
             f"- Jogo {int(row['jogo'])}: {row['nums']}",
             f"score_final={_safe_float(row, 'score_final'):.6f}",
+            f"score_decisao_protegida={_safe_float(row, 'score_decisao_protegida'):.6f}",
             f"score_contextual={_safe_float(row, 'score_contextual'):.6f}",
+            f"score_contexto_protegido={_safe_float(row, 'score_contexto_protegido'):.6f}",
             f"score_transicao={_safe_float(row, 'score_transicao'):.6f}",
+            f"risco_fn={int(_safe_float(row, 'qtd_dezenas_risco_falso_negativo'))}",
             f"overlap_com_jogo_1={int(_safe_float(row, 'overlap_com_jogo_1'))}",
             f"criterio={row.get('criterio_selecao', '-')}",
             f"metodo_origem={row.get('metodo', '-')}",
@@ -259,8 +285,10 @@ def build_prediction_report(
             "7. score contrarian: protege dezenas que o score tradicional poderia excluir, como canto, centro e faixa alta;",
             "8. score de transicao: compara cada concurso N com N+1 no historico e pontua repeticoes, entradas, saidas e estrutura de mudanca;",
             "9. varredura exaustiva das combinacoes possiveis;",
-            "10. seletor inteligente do Jogo 2: entre os candidatos que respeitam a diversidade minima, escolhe o melhor score de portfolio combinando score final, transicao, contexto, forca dos componentes e dezenas diferentes do Jogo 1;",
-            "11. diversidade minima entre os dois jogos.",
+            "10. contexto protegido: lua, numerologia, dia da semana e localidade continuam como bonus, mas nao podem derrubar sozinhos um candidato com consenso, transicao e risco de falso negativo relevantes;",
+            "11. anti-falso-negativo: identifica dezenas menos consensuais, mas presentes em candidatos fortes, para evitar exclusao total do jogo final;",
+            "12. seletor inteligente do Jogo 2: entre os candidatos que respeitam a diversidade minima, escolhe o melhor score de portfolio combinando decisao protegida, score final, transicao, contexto protegido, forca dos componentes, risco de falso negativo e dezenas diferentes do Jogo 1;",
+            "13. diversidade minima entre os dois jogos.",
             "",
             f"Combinacoes possiveis da Lotofacil: {TOTAL_COMBINATIONS}.",
             "Os dois jogos sao combinacoes completas de 15 dezenas. O sistema nao divide um palpite em metades entre sugestoes.",
@@ -310,11 +338,21 @@ def build_final_prediction(
             has_full_exhaustive_scan = bool(pd.notna(max_evaluated) and int(max_evaluated) >= TOTAL_COMBINATIONS)
         else:
             has_full_exhaustive_scan = False
+    has_matching_history = False
+    if existing_candidates is not None and not existing_candidates.empty and "concurso_base_final" in existing_candidates.columns:
+        candidate_base_final = pd.to_numeric(existing_candidates["concurso_base_final"], errors="coerce").max()
+        candidate_target_date = str(existing_candidates["contexto_data_proximo_concurso"].iloc[0]) if "contexto_data_proximo_concurso" in existing_candidates.columns else ""
+        has_matching_history = bool(
+            pd.notna(candidate_base_final)
+            and int(candidate_base_final) == last_concurso
+            and candidate_target_date == target_context.data_proximo_concurso
+        )
     has_matching_engine = (
         existing_candidates is not None
         and not existing_candidates.empty
         and required_context_cols.issubset(existing_candidates.columns)
         and has_full_exhaustive_scan
+        and has_matching_history
         and (
             (engine != "exaustivo" and "source_model" not in existing_candidates.columns)
             or str(existing_candidates["source_model"].iloc[0]) == source_model
