@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
+import logging
 
 import pandas as pd
 
 from lotofacil_analytics.auditoria import build_auditoria
 from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
+from lotofacil_analytics.climate_pipeline import ClimatePipeline
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
+from lotofacil_analytics.config import AppConfig
 from lotofacil_analytics.context_features import build_context_model, score_contextual_candidate
 from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_dezenas_long
 from lotofacil_analytics.decision_layer import (
@@ -359,6 +363,59 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("contexto_clima_temperature_2m", detail)
         self.assertGreaterEqual(float(detail["score_climatico"]), 0.0)
         self.assertLessEqual(float(detail["score_climatico"]), 100.0)
+
+    def test_climate_pipeline_is_incremental_by_default(self) -> None:
+        first = normalize_contest(payload_with_dezenas(1, cyclic_dezenas(1)))
+        second = normalize_contest(payload_with_dezenas(2, cyclic_dezenas(2)))
+        concursos = pd.DataFrame([first, second])
+        existing = pd.DataFrame(
+            [
+                {
+                    "concurso": 1,
+                    "data_sorteio": first["data_sorteio"],
+                    "cidade_sorteio": "SAO PAULO",
+                    "uf_sorteio": "SP",
+                    "clima_status": "ok",
+                    "clima_temperature_2m": 22.0,
+                    "clima_temperatura_faixa": "quente",
+                }
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AppConfig.from_base_dir(Path(tmp))
+            config.processed_csv_path.parent.mkdir(parents=True, exist_ok=True)
+            concursos.to_csv(config.processed_csv_path, index=False, encoding="utf-8-sig")
+            existing.to_csv(config.climate_csv_path, index=False, encoding="utf-8-sig")
+
+            def fake_build_climate_features(concursos_to_process: pd.DataFrame, **kwargs):
+                self.assertEqual(concursos_to_process["concurso"].astype(int).tolist(), [2])
+                new = existing.copy()
+                new["concurso"] = 2
+                new["data_sorteio"] = second["data_sorteio"]
+                new["clima_temperature_2m"] = 23.0
+                summary = pd.DataFrame(
+                    [
+                        {
+                            "cidade": "SAO PAULO",
+                            "uf": "SP",
+                            "concursos": 1,
+                            "localidades_total": 1,
+                            "localidades_processadas_planejadas": 1,
+                            "status": "ok",
+                            "erro": "",
+                            "linhas_clima": 1,
+                        }
+                    ]
+                )
+                return new, summary
+
+            with patch("lotofacil_analytics.climate_pipeline.build_climate_features", side_effect=fake_build_climate_features):
+                summary = ClimatePipeline(config=config, logger=logging.getLogger("test")).run()
+
+            saved = pd.read_csv(config.climate_csv_path, encoding="utf-8-sig")
+            self.assertEqual(saved["concurso"].astype(int).tolist(), [1, 2])
+            self.assertEqual(summary.rows, 2)
 
     def test_transition_outputs_compare_consecutive_draws(self) -> None:
         rows = []
