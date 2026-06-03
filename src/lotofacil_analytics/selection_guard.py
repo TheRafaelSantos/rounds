@@ -134,6 +134,7 @@ def enrich_candidates_with_decision_guard(candidates: pd.DataFrame, *, consensus
         score_transicao = safe_float(row, "score_transicao", score_final)
         score_contextual = safe_float(row, "score_contextual", safe_float(row, "score_localidade_numerologia", score_final))
         score_climatico = safe_float(row, "score_climatico", 50.0)
+        score_temporal_profundo = safe_float(row, "score_temporal_profundo", 50.0)
         consensus_score = round(sum(consensus_scores.get(n, 0.0) for n in nums) / len(nums), 6)
         selected_risk = sorted(nums_set & risk_set)
         selected_core = sorted(nums_set & core_set)
@@ -147,12 +148,13 @@ def enrich_candidates_with_decision_guard(candidates: pd.DataFrame, *, consensus
             6,
         )
         decision_score = round(
-            (score_final * 0.60)
+            (score_final * 0.57)
             + (score_transicao * 0.12)
             + (protected_context * 0.10)
             + (consensus_score * 0.08)
             + (risk_coverage * 0.05)
-            + (score_climatico * 0.05),
+            + (score_climatico * 0.04)
+            + (score_temporal_profundo * 0.04),
             6,
         )
         out["score_consenso_top"] = consensus_score

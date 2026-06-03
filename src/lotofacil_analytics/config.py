@@ -123,6 +123,34 @@ class AppConfig:
         return self.data_dir / "raw" / "climate_open_meteo"
 
     @property
+    def temporal_deep_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_temporal_profundo.csv"
+
+    @property
+    def temporal_deep_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_temporal_profundo_summary.csv"
+
+    @property
+    def temporal_deep_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_temporal_profundo.xlsx"
+
+    @property
+    def engine_calibration_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_engine_calibration.csv"
+
+    @property
+    def engine_calibration_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_engine_calibration_summary.csv"
+
+    @property
+    def engine_calibration_weights_json_path(self) -> Path:
+        return self.processed_dir / "lotofacil_engine_calibrated_weights.json"
+
+    @property
+    def engine_calibration_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_engine_calibration.xlsx"
+
+    @property
     def backtest_csv_path(self) -> Path:
         return self.processed_dir / "lotofacil_backtest.csv"
 

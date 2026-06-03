@@ -19,6 +19,7 @@ from lotofacil_analytics.combinacoes_pipeline import CombinacoesPipeline
 from lotofacil_analytics.dezenas_pipeline import DezenasPipeline
 from lotofacil_analytics.decision_layer import WEIGHT_PROFILE_PRESETS
 from lotofacil_analytics.decision_layer_pipeline import DecisionLayerPipeline
+from lotofacil_analytics.engine_calibration_pipeline import EngineCalibrationPipeline
 from lotofacil_analytics.export_full import export_full_workbook
 from lotofacil_analytics.final_backtest_pipeline import FinalBacktestPipeline
 from lotofacil_analytics.features_pipeline import FeaturePipeline
@@ -32,6 +33,7 @@ from lotofacil_analytics.post_result_analysis import analyze_post_result
 from lotofacil_analytics.predictor_pipeline import PredictorPipeline
 from lotofacil_analytics.interface_web import run_web_server
 from lotofacil_analytics.transition_pipeline import TransitionPipeline
+from lotofacil_analytics.temporal_deep_pipeline import TemporalDeepPipeline
 
 
 def _safe_file_label(label: str) -> str:
@@ -60,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--combinacoes", action="store_true", help="Gera combinacoes e assinaturas da Fase 4.")
     mode.add_argument("--transitions", action="store_true", help="Analisa transicoes concurso N contra N+1.")
     mode.add_argument("--climate", action="store_true", help="Baixa/gera features climaticas historicas por localidade e horario.")
+    mode.add_argument("--temporal-deep", action="store_true", help="Gera analises temporais profundas incrementais.")
     mode.add_argument("--backtest", action="store_true", help="Executa backtest walk-forward da Fase 5.")
     mode.add_argument("--audit", action="store_true", help="Executa auditoria estatistica exploratoria da Fase 6.")
     mode.add_argument("--ml", action="store_true", help="Executa ML temporal leve da Fase 7.")
@@ -70,6 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--backtest-exhaustive", action="store_true", help="Backtest walk-forward do jogo unico exaustivo.")
     mode.add_argument("--ablation-test", action="store_true", help="Mede impacto de remover familias de score do motor exaustivo.")
     mode.add_argument("--tune-weights", action="store_true", help="Testa perfis de pesos e salva o melhor perfil observado.")
+    mode.add_argument("--calibrate-engine", action="store_true", help="Calibra pesos do motor por walk-forward contra concursos passados.")
     mode.add_argument("--analyze-result", action="store_true", help="Analisa resultado real contra os jogos previstos.")
     mode.add_argument("--final-backtest", action="store_true", help="Executa backtest do score final completo contra aleatorio.")
     mode.add_argument("--export", action="store_true", help="Gera Excel consolidado com as abas do briefing.")
@@ -113,6 +117,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--draw-minute", type=int, default=0, help="Minuto de Brasilia usado para contexto lunar do proximo sorteio.")
     parser.add_argument("--climate-max-locations", type=int, default=0, help="Limite de cidades/UF no --climate; 0 processa todas.")
     parser.add_argument("--climate-force", action="store_true", help="Ignora cache local do Open-Meteo no --climate.")
+    parser.add_argument("--calibration-from-concurso", type=int, default=2500, help="Concurso inicial do --calibrate-engine.")
+    parser.add_argument("--calibration-to-concurso", type=int, default=None, help="Concurso final do --calibrate-engine; omitido usa ultimo local.")
+    parser.add_argument("--calibration-baseline-samples", type=int, default=30, help="Combos aleatorios por concurso na calibracao.")
     parser.add_argument("--actual-numbers", default=None, help="15 dezenas sorteadas para --analyze-result.")
     parser.add_argument("--result-label", default="resultado", help="Rotulo do resultado analisado.")
     parser.add_argument("--result-concurso", type=int, default=None, help="Numero do concurso analisado em --analyze-result.")
@@ -147,6 +154,7 @@ def main() -> int:
         or args.combinacoes
         or args.transitions
         or args.climate
+        or args.temporal_deep
         or args.backtest
         or args.audit
         or args.ml
@@ -157,6 +165,7 @@ def main() -> int:
         or args.backtest_exhaustive
         or args.ablation_test
         or args.tune_weights
+        or args.calibrate_engine
         or args.analyze_result
         or args.final_backtest
         or args.export
@@ -233,6 +242,8 @@ def main() -> int:
                 max_locations=args.climate_max_locations,
                 force=args.climate_force,
             )
+        elif args.temporal_deep:
+            summary = TemporalDeepPipeline(config=config, logger=logger).run(force=False)
         elif args.predict_single:
             summary = DecisionLayerPipeline(config=config, logger=logger).predict_single(
                 seed=args.seed,
@@ -282,6 +293,15 @@ def main() -> int:
                 draw_minute=args.draw_minute,
                 exhaustive_limit=args.exhaustive_limit,
             )
+        elif args.calibrate_engine:
+            summary = EngineCalibrationPipeline(config=config, logger=logger).run(
+                from_concurso=args.calibration_from_concurso,
+                to_concurso=args.calibration_to_concurso,
+                baseline_samples=args.calibration_baseline_samples,
+                seed=args.seed,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+            )
         elif args.predict:
             if args.mode == "completo":
                 pipeline.update(force_full=False, from_concurso=args.from_concurso, to_concurso=args.to_concurso)
@@ -294,6 +314,7 @@ def main() -> int:
                     max_locations=args.climate_max_locations,
                     force=args.climate_force,
                 )
+                TemporalDeepPipeline(config=config, logger=logger).run(force=False)
                 BacktestPipeline(config=config, logger=logger).run(
                     n_eval=args.n_eval,
                     min_history=args.min_history,

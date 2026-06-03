@@ -126,6 +126,7 @@ def _html_page() -> str:
         metricBar('Decisão protegida', data.score_decisao_protegida, true),
         metricBar('Score contextual', data.score_contextual, false),
         metricBar('Score climático', data.score_climatico, false),
+        metricBar('Temporal profundo', data.score_temporal_profundo, false),
         metricBar('Contexto protegido', data.score_contexto_protegido, true),
         metricBar('Score transição', data.score_transicao, false),
         metricBar('Anti-falso-negativo', data.score_cobertura_risco_falso_negativo, true),
@@ -184,6 +185,7 @@ def _html_page() -> str:
           compareRow('Decisão protegida', first.score_decisao_protegida, second.score_decisao_protegida) +
           compareRow('Score contextual', first.score_contextual, second.score_contextual) +
           compareRow('Score climático', first.score_climatico, second.score_climatico) +
+          compareRow('Temporal profundo', first.score_temporal_profundo, second.score_temporal_profundo) +
           compareRow('Contexto protegido', first.score_contexto_protegido, second.score_contexto_protegido) +
           compareRow('Score transição', first.score_transicao, second.score_transicao) +
           compareRow('Anti-falso-negativo', first.score_cobertura_risco_falso_negativo, second.score_cobertura_risco_falso_negativo) +

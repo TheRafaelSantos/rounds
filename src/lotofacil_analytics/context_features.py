@@ -36,6 +36,7 @@ class TargetContext:
     dia_semana_numero: int
     dia_semana_nome: str
     mes: int
+    bimestre: int
     trimestre: int
     semestre: int
     estacao_do_ano: str
@@ -224,6 +225,7 @@ def build_target_context(
         dia_semana_numero=weekday,
         dia_semana_nome=DIA_SEMANA_NOMES[weekday],
         mes=int(target_date.month),
+        bimestre=int((target_date.month - 1) // 2 + 1),
         trimestre=int((target_date.month - 1) // 3 + 1),
         semestre=int((target_date.month - 1) // 6 + 1),
         estacao_do_ano=estacao_do_ano(target_date),
@@ -294,6 +296,7 @@ def build_context_model(
         keys = [
             f"weekday:{int(draw_date.isoweekday())}",
             f"month:{int(draw_date.month)}",
+            f"bimester:{int((draw_date.month - 1) // 2 + 1)}",
             f"quarter:{int((draw_date.month - 1) // 3 + 1)}",
             f"semester:{int((draw_date.month - 1) // 6 + 1)}",
             f"season:{estacao_do_ano(draw_date)}",
@@ -355,6 +358,7 @@ def score_contextual_candidate(nums: Sequence[int], model: ContextModel) -> Dict
     keys = {
         "score_dia_semana": f"weekday:{target.dia_semana_numero}",
         "score_mes": f"month:{target.mes}",
+        "score_bimestre": f"bimester:{target.bimestre}",
         "score_trimestre": f"quarter:{target.trimestre}",
         "score_semestre": f"semester:{target.semestre}",
         "score_estacao": f"season:{target.estacao_do_ano}",
@@ -389,16 +393,17 @@ def score_contextual_candidate(nums: Sequence[int], model: ContextModel) -> Dict
         )
     scores["score_numerologia"] = _numerology_score(nums, target)
     temporal_score = round(
-        0.18 * scores["score_dia_semana"]
-        + 0.12 * scores["score_mes"]
-        + 0.10 * scores["score_trimestre"]
-        + 0.08 * scores["score_semestre"]
-        + 0.14 * scores["score_estacao"]
-        + 0.18 * scores["score_lua"]
+        0.17 * scores["score_dia_semana"]
+        + 0.10 * scores["score_mes"]
+        + 0.08 * scores["score_bimestre"]
+        + 0.07 * scores["score_trimestre"]
+        + 0.06 * scores["score_semestre"]
+        + 0.12 * scores["score_estacao"]
+        + 0.17 * scores["score_lua"]
         + 0.06 * scores["score_numerologia_data"]
         + 0.05 * scores["score_numerologia_concurso"]
         + 0.04 * scores["score_numerologia_dia_mes"]
-        + 0.05 * scores["score_numerologia"],
+        + 0.08 * scores["score_numerologia"],
         6,
     )
     locality_values = [
@@ -426,6 +431,7 @@ def score_contextual_candidate(nums: Sequence[int], model: ContextModel) -> Dict
         "contexto_horario_brasilia": target.horario_brasilia_assumido,
         "contexto_dia_semana": target.dia_semana_nome,
         "contexto_estacao": target.estacao_do_ano,
+        "contexto_bimestre": target.bimestre,
         "contexto_fase_lua": target.fase_lua,
         "contexto_idade_lua": target.idade_lua,
         "contexto_iluminacao_lua_percentual": target.iluminacao_lua_percentual,

@@ -22,6 +22,7 @@ from lotofacil_analytics.decision_layer import (
     run_weight_tuning,
     weights_for_profile,
 )
+from lotofacil_analytics.engine_calibration import run_engine_calibration
 from lotofacil_analytics.exhaustive_optimizer import EXHAUSTIVE_SOURCE_MODEL, build_exhaustive_candidates, resolve_exhaustive_weights
 from lotofacil_analytics.features_base import build_base_features
 from lotofacil_analytics.games import generate_games
@@ -33,6 +34,7 @@ from lotofacil_analytics.optimizer import build_optimized_candidates, score_cand
 from lotofacil_analytics.post_result_analysis import analyze_post_result, parse_numbers
 from lotofacil_analytics.predictor import select_final_games
 from lotofacil_analytics.selection_guard import build_number_guard_table, enrich_candidates_with_decision_guard
+from lotofacil_analytics.temporal_deep import build_temporal_deep_rows, temporal_deep_number_scores
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.transition_analysis import build_transition_model, build_transition_outputs, score_transition_candidate
 from lotofacil_analytics.validators import DataValidationError, validate_contest_record, validate_dataset
@@ -310,6 +312,7 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertEqual(set(candidates["source_model"]), {EXHAUSTIVE_SOURCE_MODEL})
         self.assertIn("score_localidade_numerologia", candidates.columns)
         self.assertIn("score_climatico", candidates.columns)
+        self.assertIn("score_temporal_profundo", candidates.columns)
         self.assertIn("score_transicao", candidates.columns)
         self.assertIn("contexto_cidade_sorteio", candidates.columns)
         self.assertIn("score_weights", set(summary["metrica"]))
@@ -415,7 +418,47 @@ class LotofacilValidationTest(unittest.TestCase):
 
             saved = pd.read_csv(config.climate_csv_path, encoding="utf-8-sig")
             self.assertEqual(saved["concurso"].astype(int).tolist(), [1, 2])
-            self.assertEqual(summary.rows, 2)
+        self.assertEqual(summary.rows, 2)
+
+    def test_temporal_deep_outputs_dynamic_history(self) -> None:
+        rows = []
+        for idx in range(1, 8):
+            rows.append(normalize_contest(payload_with_dezenas(idx, cyclic_dezenas(idx))))
+        concursos = pd.DataFrame(rows)
+
+        deep = build_temporal_deep_rows(concursos)
+        scores = temporal_deep_number_scores(concursos.iloc[:-1].copy(), target_date=concursos.iloc[-1]["data_sorteio"])
+
+        self.assertEqual(len(deep), 7 * 25)
+        self.assertIn("freq_mesmo_dia_semana_ate_anterior", deep.columns)
+        self.assertIn("freq_ultimos_15_dias_ate_anterior", deep.columns)
+        self.assertIn("freq_mesmo_bimestre_ate_anterior", deep.columns)
+        self.assertEqual(set(scores), set(range(1, 26)))
+        self.assertTrue(all(0.0 <= float(value) <= 100.0 for value in scores.values()))
+
+    def test_engine_calibration_generates_normalized_weights(self) -> None:
+        rows = []
+        for idx in range(1, 16):
+            rows.append(normalize_contest(payload_with_dezenas(idx, cyclic_dezenas(idx))))
+        concursos = pd.DataFrame(rows)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            weights_path = Path(tmp) / "weights.json"
+            results, summary, payload = run_engine_calibration(
+                concursos,
+                climate_features=pd.DataFrame(),
+                from_concurso=12,
+                to_concurso=14,
+                baseline_samples=2,
+                seed=123,
+                weights_json_path=weights_path,
+            )
+
+            self.assertFalse(results.empty)
+            self.assertFalse(summary.empty)
+            self.assertTrue(weights_path.exists())
+            self.assertIn("weights", payload)
+            self.assertAlmostEqual(sum(payload["weights"].values()), 1.0, places=6)
 
     def test_transition_outputs_compare_consecutive_draws(self) -> None:
         rows = []
@@ -659,6 +702,7 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("/mandel-report", html)
         self.assertIn("Comparação visual dos scores", html)
         self.assertIn("Score climático", html)
+        self.assertIn("Temporal profundo", html)
         self.assertIn("score_portfolio_jogo_2", html)
         self.assertIn("Decisão protegida", html)
         self.assertIn("Anti-falso-negativo", html)

@@ -21,6 +21,8 @@ Fases implementadas:
 11. **Camada superior - jogo unico, validacao exaustiva, ablation test e ajuste de pesos**.
 12. **Camada Mandel/bolao - universo recomendado, desdobramento completo e fechamento reduzido**.
 13. **Camada climatica experimental - temperatura, sensacao termica, umidade, pressao, chuva, anomalia e faixas climaticas**.
+14. **Temporal profundo - dia da semana, ultimos 15/30 dias, bimestre, trimestre e semestre**.
+15. **Calibracao do motor - pesos walk-forward de 2500 ate o ultimo concurso local**.
 
 Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos, backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio, motor exaustivo `ensemble_score_v4_exaustivo_transicao`, camada climatica e camada de decisao acima do motor atual.
 
@@ -114,6 +116,33 @@ Arquivos gerados:
 2. `data/processed/lotofacil_clima_summary.csv`;
 3. `data/exports/lotofacil_clima.xlsx`;
 4. cache Open-Meteo em `data/raw/climate_open_meteo`.
+
+Gerar temporal profundo incremental:
+
+```powershell
+python main.py --temporal-deep
+```
+
+Arquivos gerados:
+
+1. `data/processed/lotofacil_temporal_profundo.csv`;
+2. `data/processed/lotofacil_temporal_profundo_summary.csv`;
+3. `data/exports/lotofacil_temporal_profundo.xlsx`.
+
+Calibrar pesos do motor principal:
+
+```powershell
+python main.py --calibrate-engine --calibration-from-concurso 2500 --calibration-baseline-samples 30 --draw-hour 20 --draw-minute 0
+```
+
+Arquivos gerados:
+
+1. `data/processed/lotofacil_engine_calibration.csv`;
+2. `data/processed/lotofacil_engine_calibration_summary.csv`;
+3. `data/processed/lotofacil_engine_calibrated_weights.json`;
+4. `data/exports/lotofacil_engine_calibration.xlsx`.
+
+Quando `lotofacil_engine_calibrated_weights.json` existe, o motor exaustivo carrega esses pesos automaticamente no `--optimize` e no `--predict` quando precisa reconstruir candidatos.
 
 Gerar combinacoes e assinaturas:
 
@@ -464,9 +493,10 @@ Componentes do score:
 4. combinatorio: penaliza pares historicamente muito frequentes;
 5. contextual: considera data do proximo concurso, dia da semana, mes, trimestre, semestre, estacao do ano, fase da lua no horario de Brasilia e numerologia exploratoria;
 6. climatico experimental: temperatura, sensacao termica, umidade relativa, pressao atmosferica, chuva, anomalia de temperatura e faixas climaticas do local/horario do sorteio;
-7. cenarios: reforca soma baixa/media/alta, sequencia forte, visual forte, assinatura historica por faixas e faixa alta 21-25;
-8. contrarian: monitora dezenas que os jogos anteriores penalizaram demais, como 01, 13 e 22;
-9. transicao: compara cada concurso com o concurso seguinte e aprende repetidas, entradas, saidas, delta de soma e mudanca por faixas.
+7. temporal profundo: dia da semana dinamico, ultimos 15/30 dias, bimestre, trimestre e semestre;
+8. cenarios: reforca soma baixa/media/alta, sequencia forte, visual forte, assinatura historica por faixas e faixa alta 21-25;
+9. contrarian: monitora dezenas que os jogos anteriores penalizaram demais, como 01, 13 e 22;
+10. transicao: compara cada concurso com o concurso seguinte e aprende repetidas, entradas, saidas, delta de soma e mudanca por faixas.
 
 O score final `ensemble_score_v2` combina esses blocos com pesos documentados na aba/CSV de resumo do otimizador. A geracao de candidatos usa perfis variados, incluindo `soma_baixa`, `sequencia_forte`, `visual_forte`, `contrarian_controlado`, `faixa_alta_reforcada`, `assinatura_historica`, `weighted_temporal`, `monte_carlo_filtrado` e `genetico_simples`.
 

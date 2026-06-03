@@ -24,6 +24,7 @@ from .optimizer import (
     _range_signature,
     _recent_freq,
 )
+from .temporal_deep import selected_temporal_deep_score, temporal_deep_number_scores
 from .transition_analysis import build_transition_model, score_transition_from_omitted
 
 
@@ -35,16 +36,17 @@ PAIR_COUNT = math.comb(PICK_SIZE, 2)
 FULL_SUM = sum(NUMBERS)
 FULL_EVEN_COUNT = sum(1 for n in NUMBERS if n % 2 == 0)
 DEFAULT_EXHAUSTIVE_WEIGHTS: Dict[str, float] = {
-    "estatistico": 0.17,
-    "historico": 0.115,
+    "estatistico": 0.165,
+    "historico": 0.105,
     "atraso": 0.055,
-    "combinatorio": 0.105,
-    "localidade_numerologia": 0.165,
+    "combinatorio": 0.10,
+    "localidade_numerologia": 0.145,
     "climatico": 0.03,
-    "cenarios": 0.115,
-    "contrarian": 0.085,
+    "temporal_profundo": 0.05,
+    "cenarios": 0.105,
+    "contrarian": 0.08,
     "transicao": 0.105,
-    "nao_repeticao_exata": 0.055,
+    "nao_repeticao_exata": 0.06,
 }
 WEIGHT_ALIASES = {
     "contextual": "localidade_numerologia",
@@ -52,6 +54,8 @@ WEIGHT_ALIASES = {
     "localidade_numerologia_lua_contexto": "localidade_numerologia",
     "clima": "climatico",
     "weather": "climatico",
+    "temporal": "temporal_profundo",
+    "deep_temporal": "temporal_profundo",
 }
 
 
@@ -81,6 +85,7 @@ def format_exhaustive_weights(weights: Mapping[str, float]) -> str:
         "combinatorio",
         "localidade_numerologia",
         "climatico",
+        "temporal_profundo",
         "cenarios",
         "contrarian",
         "transicao",
@@ -89,6 +94,7 @@ def format_exhaustive_weights(weights: Mapping[str, float]) -> str:
     labels = {
         "localidade_numerologia": "localidade_numerologia_lua_contexto",
         "climatico": "clima_temperatura_umidade_pressao_chuva",
+        "temporal_profundo": "dia_semana_15d_30d_bimestre_trimestre_semestre",
     }
     return ";".join(f"{labels.get(key, key)}={float(weights[key]):.4f}" for key in ordered)
 
@@ -146,6 +152,7 @@ def _target_context_keys(model: ContextModel) -> List[Tuple[str, float]]:
     keys: List[Tuple[str, float]] = [
         (f"weekday:{target.dia_semana_numero}", 0.13),
         (f"month:{target.mes}", 0.08),
+        (f"bimester:{target.bimestre}", 0.07),
         (f"quarter:{target.trimestre}", 0.06),
         (f"semester:{target.semestre}", 0.05),
         (f"season:{target.estacao_do_ano}", 0.10),
@@ -337,12 +344,14 @@ def build_exhaustive_candidates(
     )
     context_scores = _context_number_scores(context_model)
     climate_scores = _climate_number_scores(context_model)
+    temporal_deep_scores = temporal_deep_number_scores(df, target_date=context_model.target.data_proximo_concurso)
     transition_model = build_transition_model(df)
 
     recent_total = sum(float(recent_freq.get(n, 0)) for n in NUMBERS)
     delay_total = sum(float(delays.get(n, 0)) for n in NUMBERS)
     context_total = sum(float(context_scores.get(n, 50.0)) for n in NUMBERS)
     climate_total = sum(float(climate_scores.get(n, 50.0)) for n in NUMBERS)
+    temporal_deep_total = sum(float(temporal_deep_scores.get(n, 50.0)) for n in NUMBERS)
     pair_values = list(pair_freq.values())
     pair_median = float(pd.Series(pair_values).median()) if pair_values else 0.0
     pair_matrix = [[0.0 for _ in range(MAX_DEZENA + 1)] for _ in range(MAX_DEZENA + 1)]
@@ -412,6 +421,8 @@ def build_exhaustive_candidates(
         score_contextual = round(max(0.0, min(100.0, selected_context_sum / PICK_SIZE)), 6)
         selected_climate_sum = climate_total - sum(float(climate_scores.get(int(n), 50.0)) for n in omitted)
         score_climatico = round(max(0.0, min(100.0, selected_climate_sum / PICK_SIZE)), 6)
+        selected_temporal_deep_sum = temporal_deep_total - sum(float(temporal_deep_scores.get(int(n), 50.0)) for n in omitted)
+        score_temporal_profundo = round(max(0.0, min(100.0, selected_temporal_deep_sum / PICK_SIZE)), 6)
         score_cenarios = _scenario_score(
             total=selected_sum,
             max_run=max_run,
@@ -434,6 +445,7 @@ def build_exhaustive_candidates(
             + resolved_weights["combinatorio"] * score_combinatorio
             + resolved_weights["localidade_numerologia"] * score_localidade_numerologia
             + resolved_weights["climatico"] * score_climatico
+            + resolved_weights["temporal_profundo"] * score_temporal_profundo
             + resolved_weights["cenarios"] * score_cenarios
             + resolved_weights["contrarian"] * score_contrarian
             + resolved_weights["transicao"] * score_transicao
@@ -454,6 +466,7 @@ def build_exhaustive_candidates(
                 "score_contextual": score_contextual,
                 "score_localidade_numerologia": score_localidade_numerologia,
                 "score_climatico": score_climatico,
+                "score_temporal_profundo": score_temporal_profundo,
                 "score_cenarios": score_cenarios,
                 "score_contrarian": score_contrarian,
                 "score_transicao": score_transicao,
@@ -535,6 +548,7 @@ def build_exhaustive_candidates(
             {"metrica": "draw_minute_brasilia", "valor": int(draw_minute)},
             {"metrica": "data_proximo_concurso", "valor": context_model.target.data_proximo_concurso},
             {"metrica": "dia_semana_proximo_concurso", "valor": context_model.target.dia_semana_nome},
+            {"metrica": "bimestre_proximo_concurso", "valor": context_model.target.bimestre},
             {"metrica": "fase_lua_proximo_concurso", "valor": context_model.target.fase_lua},
             {"metrica": "idade_lua_proximo_concurso", "valor": context_model.target.idade_lua},
             {"metrica": "iluminacao_lua_proximo_concurso", "valor": context_model.target.iluminacao_lua_percentual},
@@ -562,6 +576,7 @@ def build_exhaustive_candidates(
             {"metrica": "clima_chuva_faixa", "valor": context_model.target.clima_chuva_faixa},
             {"metrica": "clima_anomalia_faixa", "valor": context_model.target.clima_anomalia_faixa},
             {"metrica": "clima_assinatura", "valor": context_model.target.clima_assinatura},
+            {"metrica": "temporal_profundo_componentes", "valor": "dia_semana;ultimos_15_dias;ultimos_30_dias;bimestre;trimestre;semestre"},
             {"metrica": "transicao_pares_consecutivos_analisados", "valor": transition_model.summary.get("pares_consecutivos_analisados", 0)},
             {"metrica": "transicao_media_repetidas", "valor": transition_model.summary.get("media_repetidas", "")},
             {"metrica": "transicao_mediana_repetidas", "valor": transition_model.summary.get("mediana_repetidas", "")},
