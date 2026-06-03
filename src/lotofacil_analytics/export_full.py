@@ -159,6 +159,7 @@ def _parametros(config: AppConfig) -> pd.DataFrame:
             {"parametro": "comando_update", "valor": "python main.py --update"},
             {"parametro": "comando_features", "valor": "python main.py --features"},
             {"parametro": "comando_transitions", "valor": "python main.py --transitions"},
+            {"parametro": "comando_climate", "valor": "python main.py --climate --draw-hour 20 --draw-minute 0"},
             {"parametro": "comando_backtest", "valor": "python main.py --backtest"},
             {"parametro": "comando_export", "valor": "python main.py --export"},
             {"parametro": "comando_optimize_exaustivo", "valor": "python main.py --optimize --engine exaustivo --top-games 5000 --draw-hour 20 --draw-minute 0"},
@@ -204,6 +205,8 @@ def export_full_workbook(config: AppConfig, logger: logging.Logger) -> ExportSum
     transitions = _read_csv(config.transition_csv_path)
     transitions_summary = _read_csv(config.transition_summary_csv_path)
     transitions_dezenas = _read_csv(config.transition_dezenas_csv_path)
+    climate = _read_csv(config.climate_csv_path)
+    climate_summary = _read_csv(config.climate_summary_csv_path)
     backtest = _read_csv(config.backtest_csv_path)
     generated_games = _read_csv(config.generated_games_csv_path)
     prediction = _read_csv(config.prediction_csv_path)
@@ -235,6 +238,8 @@ def export_full_workbook(config: AppConfig, logger: logging.Logger) -> ExportSum
         "transicoes": transitions if not transitions.empty else _empty_sheet("Transicoes nao encontradas. Rode python main.py --transitions."),
         "transicoes_resumo": transitions_summary if not transitions_summary.empty else _empty_sheet("Resumo de transicoes nao encontrado. Rode python main.py --transitions."),
         "transicoes_dezenas": transitions_dezenas if not transitions_dezenas.empty else _empty_sheet("Transicoes por dezena nao encontradas. Rode python main.py --transitions."),
+        "clima": climate if not climate.empty else _empty_sheet("Clima nao encontrado. Rode python main.py --climate --draw-hour 20 --draw-minute 0."),
+        "clima_resumo": climate_summary if not climate_summary.empty else _empty_sheet("Resumo climatico nao encontrado. Rode python main.py --climate."),
         "backtest": backtest if not backtest.empty else _empty_sheet("Backtest nao encontrado. Rode python main.py --backtest."),
         "backtest_score_final": final_backtest if not final_backtest.empty else _empty_sheet("Backtest score final nao encontrado. Rode python main.py --final-backtest."),
         "backtest_score_final_resumo": final_backtest_summary if not final_backtest_summary.empty else _empty_sheet("Resumo do backtest score final nao encontrado. Rode python main.py --final-backtest."),

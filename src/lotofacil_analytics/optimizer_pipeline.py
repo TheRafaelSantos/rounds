@@ -4,6 +4,7 @@ import logging
 
 import pandas as pd
 
+from .climate_runtime import load_runtime_climate
 from .config import AppConfig
 from .exhaustive_optimizer import build_exhaustive_candidates
 from .optimizer import OptimizerSummary, build_optimized_candidates
@@ -33,12 +34,20 @@ class OptimizerPipeline:
             raise ValueError("Historico local nao encontrado. Rode primeiro: python main.py --update")
 
         if engine == "exaustivo":
+            climate_features, target_climate = load_runtime_climate(
+                config=self.config,
+                concursos=concursos,
+                draw_hour=draw_hour,
+                draw_minute=draw_minute,
+            )
             candidates, summary = build_exhaustive_candidates(
                 concursos,
                 top_games=max(top_games, 5000),
                 draw_hour=draw_hour,
                 draw_minute=draw_minute,
                 limit_combinations=exhaustive_limit,
+                climate_features=climate_features,
+                target_climate=target_climate,
             )
         else:
             candidates, summary = build_optimized_candidates(

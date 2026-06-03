@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Mapping, Sequence, Tuple
 
 import pandas as pd
 
@@ -108,6 +108,7 @@ def _portfolio_metrics_for_second(row: pd.Series, first_nums: Sequence[int]) -> 
                 "score_historico",
                 "score_atraso",
                 "score_combinatorio",
+                "score_climatico",
                 "score_cenarios",
                 "score_contrarian",
             ],
@@ -243,6 +244,8 @@ def build_prediction_report(
         f"- Localidade usada: {target_context.local_sorteio_assumido or '-'} | {target_context.cidade_sorteio_assumida or '-'} | {target_context.uf_sorteio_assumida or '-'}",
         f"- Bairro: {target_context.bairro_sorteio_assumido or 'indisponivel na base atual'}",
         f"- Observacao localidade: {target_context.observacao_localidade}",
+        f"- Clima: temperatura {target_context.clima_temperature_2m if target_context.clima_temperature_2m is not None else 'indisponivel'} C; sensacao {target_context.clima_apparent_temperature if target_context.clima_apparent_temperature is not None else 'indisponivel'} C; umidade {target_context.clima_relative_humidity_2m if target_context.clima_relative_humidity_2m is not None else 'indisponivel'}%; pressao {target_context.clima_surface_pressure if target_context.clima_surface_pressure is not None else 'indisponivel'} hPa; chuva {target_context.clima_precipitation if target_context.clima_precipitation is not None else 'indisponivel'} mm",
+        f"- Faixas climaticas: temperatura={target_context.clima_temperatura_faixa}; sensacao={target_context.clima_sensacao_faixa}; umidade={target_context.clima_umidade_faixa}; pressao={target_context.clima_pressao_faixa}; chuva={target_context.clima_chuva_faixa}; anomalia={target_context.clima_anomalia_faixa}",
         "",
         "Aviso: sugestoes matematicas/estatisticas; nao existe garantia de acerto em sorteios aleatorios.",
         "",
@@ -255,6 +258,7 @@ def build_prediction_report(
             f"score_final={_safe_float(row, 'score_final'):.6f}",
             f"score_decisao_protegida={_safe_float(row, 'score_decisao_protegida'):.6f}",
             f"score_contextual={_safe_float(row, 'score_contextual'):.6f}",
+            f"score_climatico={_safe_float(row, 'score_climatico', 50.0):.6f}",
             f"score_contexto_protegido={_safe_float(row, 'score_contexto_protegido'):.6f}",
             f"score_transicao={_safe_float(row, 'score_transicao'):.6f}",
             f"risco_fn={int(_safe_float(row, 'qtd_dezenas_risco_falso_negativo'))}",
@@ -281,14 +285,15 @@ def build_prediction_report(
             "3. score de atraso historico;",
             "4. score combinatorio;",
             "5. score contextual: data do proximo concurso, dia da semana, periodo do ano, fase da lua, numerologia e localidade;",
-            "6. score de cenarios: soma baixa/media/alta, sequencias, faixas historicas e visual forte permitido;",
-            "7. score contrarian: protege dezenas que o score tradicional poderia excluir, como canto, centro e faixa alta;",
-            "8. score de transicao: compara cada concurso N com N+1 no historico e pontua repeticoes, entradas, saidas e estrutura de mudanca;",
-            "9. varredura exaustiva das combinacoes possiveis;",
-            "10. contexto protegido: lua, numerologia, dia da semana e localidade continuam como bonus, mas nao podem derrubar sozinhos um candidato com consenso, transicao e risco de falso negativo relevantes;",
-            "11. anti-falso-negativo: identifica dezenas menos consensuais, mas presentes em candidatos fortes, para evitar exclusao total do jogo final;",
-            "12. seletor inteligente do Jogo 2: entre os candidatos que respeitam a diversidade minima, escolhe o melhor score de portfolio combinando decisao protegida, score final, transicao, contexto protegido, forca dos componentes, risco de falso negativo e dezenas diferentes do Jogo 1;",
-            "13. diversidade minima entre os dois jogos.",
+            "6. score climatico experimental: temperatura, sensacao termica, umidade, pressao, chuva, anomalia de temperatura e faixas climaticas;",
+            "7. score de cenarios: soma baixa/media/alta, sequencias, faixas historicas e visual forte permitido;",
+            "8. score contrarian: protege dezenas que o score tradicional poderia excluir, como canto, centro e faixa alta;",
+            "9. score de transicao: compara cada concurso N com N+1 no historico e pontua repeticoes, entradas, saidas e estrutura de mudanca;",
+            "10. varredura exaustiva das combinacoes possiveis;",
+            "11. contexto protegido: lua, numerologia, dia da semana e localidade continuam como bonus, mas nao podem derrubar sozinhos um candidato com consenso, transicao e risco de falso negativo relevantes;",
+            "12. anti-falso-negativo: identifica dezenas menos consensuais, mas presentes em candidatos fortes, para evitar exclusao total do jogo final;",
+            "13. seletor inteligente do Jogo 2: entre os candidatos que respeitam a diversidade minima, escolhe o melhor score de portfolio combinando decisao protegida, score final, transicao, contexto protegido, forca dos componentes, risco de falso negativo e dezenas diferentes do Jogo 1;",
+            "14. diversidade minima entre os dois jogos.",
             "",
             f"Combinacoes possiveis da Lotofacil: {TOTAL_COMBINATIONS}.",
             "Os dois jogos sao combinacoes completas de 15 dezenas. O sistema nao divide um palpite em metades entre sugestoes.",
@@ -318,6 +323,8 @@ def build_final_prediction(
     excel_path: Path,
     engine: str = "exaustivo",
     exhaustive_limit: int | None = None,
+    climate_features: pd.DataFrame | None = None,
+    target_climate: Mapping[str, object] | None = None,
 ) -> PredictionSummary:
     if concursos.empty:
         raise ValueError("Historico local nao encontrado. Rode primeiro: python main.py --update")
@@ -327,7 +334,7 @@ def build_final_prediction(
     last_concurso = int(last["concurso"])
     last_date = str(last["data_sorteio"])
     concurso_alvo = last_concurso + 1
-    target_context = build_target_context(df, draw_hour=draw_hour, draw_minute=draw_minute)
+    target_context = build_target_context(df, draw_hour=draw_hour, draw_minute=draw_minute, target_climate=target_climate)
 
     source_model = EXHAUSTIVE_SOURCE_MODEL if engine == "exaustivo" else "ensemble_score_v2"
     required_context_cols = {"score_contextual", "score_transicao", "contexto_data_proximo_concurso", "contexto_fase_lua"}
@@ -351,6 +358,7 @@ def build_final_prediction(
         existing_candidates is not None
         and not existing_candidates.empty
         and required_context_cols.issubset(existing_candidates.columns)
+        and (climate_features is None or climate_features.empty or "score_climatico" in existing_candidates.columns)
         and has_full_exhaustive_scan
         and has_matching_history
         and (
@@ -367,6 +375,8 @@ def build_final_prediction(
             draw_hour=draw_hour,
             draw_minute=draw_minute,
             limit_combinations=exhaustive_limit,
+            climate_features=climate_features,
+            target_climate=target_climate,
         )
     else:
         candidates, _summary = build_optimized_candidates(
@@ -390,6 +400,19 @@ def build_final_prediction(
     final_games.insert(5, "fase_lua_proximo_concurso", target_context.fase_lua)
     final_games.insert(6, "iluminacao_lua_percentual", target_context.iluminacao_lua_percentual)
     final_games.insert(7, "numerologia_data_raiz", target_context.numerologia_data_raiz)
+    final_games["clima_temperature_2m"] = target_context.clima_temperature_2m
+    final_games["clima_apparent_temperature"] = target_context.clima_apparent_temperature
+    final_games["clima_relative_humidity_2m"] = target_context.clima_relative_humidity_2m
+    final_games["clima_surface_pressure"] = target_context.clima_surface_pressure
+    final_games["clima_precipitation"] = target_context.clima_precipitation
+    final_games["clima_temperature_anomalia"] = target_context.clima_temperature_anomalia
+    final_games["clima_temperatura_faixa"] = target_context.clima_temperatura_faixa
+    final_games["clima_sensacao_faixa"] = target_context.clima_sensacao_faixa
+    final_games["clima_umidade_faixa"] = target_context.clima_umidade_faixa
+    final_games["clima_pressao_faixa"] = target_context.clima_pressao_faixa
+    final_games["clima_chuva_faixa"] = target_context.clima_chuva_faixa
+    final_games["clima_anomalia_faixa"] = target_context.clima_anomalia_faixa
+    final_games["clima_assinatura"] = target_context.clima_assinatura
     if "source_model" in final_games.columns:
         final_games["source_model"] = source_model
     else:

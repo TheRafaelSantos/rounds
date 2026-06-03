@@ -4,6 +4,7 @@ import logging
 
 import pandas as pd
 
+from .climate_runtime import load_runtime_climate
 from .config import AppConfig
 from .predictor import PredictionSummary, build_final_prediction
 from .storage import load_processed_csv
@@ -33,6 +34,12 @@ class PredictorPipeline:
             raise ValueError("Historico local nao encontrado. Rode primeiro: python main.py --update")
 
         candidates = load_processed_csv(self.config.optimizer_candidates_csv_path)
+        climate_features, target_climate = load_runtime_climate(
+            config=self.config,
+            concursos=concursos,
+            draw_hour=draw_hour,
+            draw_minute=draw_minute,
+        )
         summary = build_final_prediction(
             concursos,
             existing_candidates=candidates,
@@ -49,6 +56,8 @@ class PredictorPipeline:
             excel_path=self.config.prediction_excel_path,
             engine=engine,
             exhaustive_limit=exhaustive_limit,
+            climate_features=climate_features,
+            target_climate=target_climate,
         )
 
         self.logger.info("Predicao final salva em %s", self.config.prediction_csv_path)

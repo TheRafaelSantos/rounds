@@ -4,6 +4,7 @@ import logging
 
 import pandas as pd
 
+from .climate_runtime import load_runtime_climate
 from .config import AppConfig
 from .context_features import build_target_context
 from .exhaustive_optimizer import TOTAL_COMBINATIONS, build_exhaustive_candidates
@@ -22,6 +23,8 @@ class MandelPipeline:
         *,
         draw_hour: int,
         draw_minute: int,
+        climate_features: pd.DataFrame,
+        target_climate: dict[str, object],
     ) -> pd.DataFrame:
         candidates = load_processed_csv(self.config.optimizer_candidates_csv_path)
         target_context = build_target_context(concursos, draw_hour=draw_hour, draw_minute=draw_minute)
@@ -42,6 +45,7 @@ class MandelPipeline:
                 and pd.notna(candidate_base)
                 and int(candidate_base) == last_concurso
                 and candidate_target_date == target_context.data_proximo_concurso
+                and (climate_features.empty or "score_climatico" in candidates.columns)
             )
         if valid:
             return candidates
@@ -51,6 +55,8 @@ class MandelPipeline:
             top_games=5000,
             draw_hour=draw_hour,
             draw_minute=draw_minute,
+            climate_features=climate_features,
+            target_climate=target_climate,
         )
         candidates = sanitize_dataframe_for_tabular_output(candidates)
         summary = sanitize_dataframe_for_tabular_output(summary)
@@ -77,10 +83,18 @@ class MandelPipeline:
         if concursos.empty:
             raise ValueError("Historico local nao encontrado. Rode primeiro: python main.py --update")
 
+        climate_features, target_climate = load_runtime_climate(
+            config=self.config,
+            concursos=concursos,
+            draw_hour=draw_hour,
+            draw_minute=draw_minute,
+        )
         candidates = self._load_or_rebuild_candidates(
             concursos,
             draw_hour=draw_hour,
             draw_minute=draw_minute,
+            climate_features=climate_features,
+            target_climate=target_climate,
         )
         summary = run_mandel_strategy(
             concursos,

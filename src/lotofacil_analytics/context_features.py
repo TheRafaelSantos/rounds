@@ -5,7 +5,7 @@ import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime, time, timezone
-from typing import Dict, List, Sequence
+from typing import Dict, List, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -51,6 +51,22 @@ class TargetContext:
     bairro_sorteio_assumido: str
     observacao_horario: str
     observacao_localidade: str
+    clima_status: str = "indisponivel"
+    clima_fonte: str = "indisponivel"
+    clima_temperature_2m: float | None = None
+    clima_apparent_temperature: float | None = None
+    clima_relative_humidity_2m: float | None = None
+    clima_surface_pressure: float | None = None
+    clima_precipitation: float | None = None
+    clima_temperature_media_30d: float | None = None
+    clima_temperature_anomalia: float | None = None
+    clima_temperatura_faixa: str = "indisponivel"
+    clima_sensacao_faixa: str = "indisponivel"
+    clima_umidade_faixa: str = "indisponivel"
+    clima_pressao_faixa: str = "indisponivel"
+    clima_chuva_faixa: str = "indisponivel"
+    clima_anomalia_faixa: str = "indisponivel"
+    clima_assinatura: str = "indisponivel"
 
     def as_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -61,6 +77,17 @@ class ContextModel:
     target: TargetContext
     sample_sizes: Dict[str, int]
     counters: Dict[str, Counter[int]]
+
+
+CLIMATE_CONTEXT_COLUMNS = [
+    ("clima_temperatura_faixa", "climate:temperatura"),
+    ("clima_sensacao_faixa", "climate:sensacao"),
+    ("clima_umidade_faixa", "climate:umidade"),
+    ("clima_pressao_faixa", "climate:pressao"),
+    ("clima_chuva_faixa", "climate:chuva"),
+    ("clima_anomalia_faixa", "climate:anomalia"),
+    ("clima_assinatura", "climate:assinatura"),
+]
 
 
 def _nums_from_row(row: pd.Series) -> List[int]:
@@ -80,6 +107,41 @@ def normalize_context_text(value: object) -> str:
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     text = "".join(ch.upper() if ch.isalnum() else " " for ch in text)
     return " ".join(text.split())
+
+
+def _climate_text(climate: Mapping[str, object] | None, key: str, default: str = "indisponivel") -> str:
+    if not climate:
+        return default
+    value = climate.get(key, default)
+    if pd.isna(value):
+        return default
+    return str(value)
+
+
+def _climate_float(climate: Mapping[str, object] | None, key: str) -> float | None:
+    if not climate:
+        return None
+    value = climate.get(key)
+    if pd.isna(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _climate_keys_from_mapping(climate: Mapping[str, object] | None) -> List[str]:
+    if not climate:
+        return []
+    keys: List[str] = []
+    status = _climate_text(climate, "clima_status", "")
+    if status.startswith("erro"):
+        return keys
+    for column, prefix in CLIMATE_CONTEXT_COLUMNS:
+        value = _climate_text(climate, column, "")
+        if value and value != "indisponivel":
+            keys.append(f"{prefix}:{value}")
+    return keys
 
 
 def estacao_do_ano(date: pd.Timestamp) -> str:
@@ -133,7 +195,13 @@ def _target_date_from_history(concursos: pd.DataFrame) -> pd.Timestamp:
     return pd.Timestamp(next_date)
 
 
-def build_target_context(concursos: pd.DataFrame, *, draw_hour: int = 20, draw_minute: int = 0) -> TargetContext:
+def build_target_context(
+    concursos: pd.DataFrame,
+    *,
+    draw_hour: int = 20,
+    draw_minute: int = 0,
+    target_climate: Mapping[str, object] | None = None,
+) -> TargetContext:
     if concursos.empty:
         raise ValueError("Historico local nao encontrado.")
     df = concursos.copy().sort_values("concurso").reset_index(drop=True)
@@ -171,14 +239,51 @@ def build_target_context(concursos: pd.DataFrame, *, draw_hour: int = 20, draw_m
         bairro_sorteio_assumido=bairro,
         observacao_horario="A API da CAIXA informa a data do proximo concurso, mas nao o horario; foi usado horario de Brasilia configuravel.",
         observacao_localidade="A API local informa a localidade do sorteio realizado, mas nao garante localidade futura; para o proximo concurso foi usada a localidade do ultimo concurso disponivel como premissa auditavel.",
+        clima_status=_climate_text(target_climate, "clima_status"),
+        clima_fonte=_climate_text(target_climate, "clima_fonte"),
+        clima_temperature_2m=_climate_float(target_climate, "clima_temperature_2m"),
+        clima_apparent_temperature=_climate_float(target_climate, "clima_apparent_temperature"),
+        clima_relative_humidity_2m=_climate_float(target_climate, "clima_relative_humidity_2m"),
+        clima_surface_pressure=_climate_float(target_climate, "clima_surface_pressure"),
+        clima_precipitation=_climate_float(target_climate, "clima_precipitation"),
+        clima_temperature_media_30d=_climate_float(target_climate, "clima_temperature_media_30d"),
+        clima_temperature_anomalia=_climate_float(target_climate, "clima_temperature_anomalia"),
+        clima_temperatura_faixa=_climate_text(target_climate, "clima_temperatura_faixa"),
+        clima_sensacao_faixa=_climate_text(target_climate, "clima_sensacao_faixa"),
+        clima_umidade_faixa=_climate_text(target_climate, "clima_umidade_faixa"),
+        clima_pressao_faixa=_climate_text(target_climate, "clima_pressao_faixa"),
+        clima_chuva_faixa=_climate_text(target_climate, "clima_chuva_faixa"),
+        clima_anomalia_faixa=_climate_text(target_climate, "clima_anomalia_faixa"),
+        clima_assinatura=_climate_text(target_climate, "clima_assinatura"),
     )
 
 
-def build_context_model(concursos: pd.DataFrame, *, draw_hour: int = 20, draw_minute: int = 0) -> ContextModel:
-    target = build_target_context(concursos, draw_hour=draw_hour, draw_minute=draw_minute)
+def build_context_model(
+    concursos: pd.DataFrame,
+    *,
+    draw_hour: int = 20,
+    draw_minute: int = 0,
+    climate_features: pd.DataFrame | None = None,
+    target_climate: Mapping[str, object] | None = None,
+) -> ContextModel:
+    target = build_target_context(
+        concursos,
+        draw_hour=draw_hour,
+        draw_minute=draw_minute,
+        target_climate=target_climate,
+    )
     counters: Dict[str, Counter[int]] = defaultdict(Counter)
     sample_sizes: Dict[str, int] = defaultdict(int)
     df = concursos.copy().sort_values("concurso").reset_index(drop=True)
+    climate_by_concurso: Dict[int, Dict[str, object]] = {}
+    if climate_features is not None and not climate_features.empty and "concurso" in climate_features.columns:
+        climate_df = climate_features.copy()
+        climate_df["concurso"] = pd.to_numeric(climate_df["concurso"], errors="coerce")
+        climate_df = climate_df.dropna(subset=["concurso"])
+        climate_by_concurso = {
+            int(row["concurso"]): row.to_dict()
+            for _, row in climate_df.iterrows()
+        }
 
     for _, row in df.iterrows():
         draw_date = pd.to_datetime(row["data_sorteio"], errors="coerce")
@@ -211,6 +316,8 @@ def build_context_model(concursos: pd.DataFrame, *, draw_hour: int = 20, draw_mi
             keys.append(f"bairro:{bairro}")
         if cidade and uf:
             keys.append(f"cidade_uf:{cidade}|{uf}")
+        climate_row = climate_by_concurso.get(int(row["concurso"]))
+        keys.extend(_climate_keys_from_mapping(climate_row))
         nums = _nums_from_row(row)
         for key in keys:
             sample_sizes[key] += 1
@@ -266,6 +373,13 @@ def score_contextual_candidate(nums: Sequence[int], model: ContextModel) -> Dict
         keys["score_bairro_sorteio"] = f"bairro:{target.bairro_sorteio_assumido}"
     if target.cidade_sorteio_assumida and target.uf_sorteio_assumida:
         keys["score_cidade_uf_sorteio"] = f"cidade_uf:{target.cidade_sorteio_assumida}|{target.uf_sorteio_assumida}"
+    climate_score_names: List[str] = []
+    for column, prefix in CLIMATE_CONTEXT_COLUMNS:
+        value = getattr(target, column)
+        if value and str(value) != "indisponivel":
+            score_name = f"score_{column}"
+            keys[score_name] = f"{prefix}:{value}"
+            climate_score_names.append(score_name)
     scores: Dict[str, float] = {}
     for score_name, key in keys.items():
         scores[score_name] = _frequency_score(
@@ -299,11 +413,14 @@ def score_contextual_candidate(nums: Sequence[int], model: ContextModel) -> Dict
         if name in scores
     ]
     locality_score = round(float(sum(locality_values) / len(locality_values)), 6) if locality_values else 50.0
+    climate_values = [scores[name] for name in climate_score_names if name in scores]
+    climate_score = round(float(sum(climate_values) / len(climate_values)), 6) if climate_values else 50.0
     score_contextual = round(0.82 * temporal_score + 0.18 * locality_score, 6)
     return {
         **scores,
         "score_contextual_temporal": temporal_score,
         "score_localidade": locality_score,
+        "score_climatico": climate_score,
         "score_contextual": score_contextual,
         "contexto_data_proximo_concurso": target.data_proximo_concurso,
         "contexto_horario_brasilia": target.horario_brasilia_assumido,
@@ -320,4 +437,20 @@ def score_contextual_candidate(nums: Sequence[int], model: ContextModel) -> Dict
         "contexto_uf_sorteio": target.uf_sorteio_assumida,
         "contexto_bairro_sorteio": target.bairro_sorteio_assumido,
         "contexto_observacao_localidade": target.observacao_localidade,
+        "contexto_clima_status": target.clima_status,
+        "contexto_clima_fonte": target.clima_fonte,
+        "contexto_clima_temperature_2m": target.clima_temperature_2m,
+        "contexto_clima_apparent_temperature": target.clima_apparent_temperature,
+        "contexto_clima_relative_humidity_2m": target.clima_relative_humidity_2m,
+        "contexto_clima_surface_pressure": target.clima_surface_pressure,
+        "contexto_clima_precipitation": target.clima_precipitation,
+        "contexto_clima_temperature_media_30d": target.clima_temperature_media_30d,
+        "contexto_clima_temperature_anomalia": target.clima_temperature_anomalia,
+        "contexto_clima_temperatura_faixa": target.clima_temperatura_faixa,
+        "contexto_clima_sensacao_faixa": target.clima_sensacao_faixa,
+        "contexto_clima_umidade_faixa": target.clima_umidade_faixa,
+        "contexto_clima_pressao_faixa": target.clima_pressao_faixa,
+        "contexto_clima_chuva_faixa": target.clima_chuva_faixa,
+        "contexto_clima_anomalia_faixa": target.clima_anomalia_faixa,
+        "contexto_clima_assinatura": target.clima_assinatura,
     }

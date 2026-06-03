@@ -107,6 +107,22 @@ class AppConfig:
         return self.exports_dir / "lotofacil_transicoes.xlsx"
 
     @property
+    def climate_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_clima.csv"
+
+    @property
+    def climate_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_clima_summary.csv"
+
+    @property
+    def climate_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_clima.xlsx"
+
+    @property
+    def climate_cache_dir(self) -> Path:
+        return self.data_dir / "raw" / "climate_open_meteo"
+
+    @property
     def backtest_csv_path(self) -> Path:
         return self.processed_dir / "lotofacil_backtest.csv"
 

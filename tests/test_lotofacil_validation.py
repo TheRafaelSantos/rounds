@@ -9,6 +9,7 @@ import pandas as pd
 from lotofacil_analytics.auditoria import build_auditoria
 from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
+from lotofacil_analytics.context_features import build_context_model, score_contextual_candidate
 from lotofacil_analytics.dezenas_history import build_dezenas_historico, build_dezenas_long
 from lotofacil_analytics.decision_layer import (
     build_single_prediction,
@@ -304,6 +305,7 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertEqual(len(candidates), 5)
         self.assertEqual(set(candidates["source_model"]), {EXHAUSTIVE_SOURCE_MODEL})
         self.assertIn("score_localidade_numerologia", candidates.columns)
+        self.assertIn("score_climatico", candidates.columns)
         self.assertIn("score_transicao", candidates.columns)
         self.assertIn("contexto_cidade_sorteio", candidates.columns)
         self.assertIn("score_weights", set(summary["metrica"]))
@@ -314,6 +316,49 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertEqual(len(nums), 15)
             self.assertEqual(len(set(nums)), 15)
             self.assertTrue(all(1 <= n <= 25 for n in nums))
+
+    def test_context_model_uses_climate_features_without_network(self) -> None:
+        rows = []
+        climate_rows = []
+        for idx in range(1, 14):
+            payload = payload_with_dezenas(idx, cyclic_dezenas(idx))
+            payload["nomeMunicipioUFSorteio"] = "SAO PAULO, SP"
+            rows.append(normalize_contest(payload))
+            climate_rows.append(
+                {
+                    "concurso": idx,
+                    "clima_status": "ok",
+                    "clima_temperature_2m": 24.0,
+                    "clima_apparent_temperature": 25.0,
+                    "clima_relative_humidity_2m": 70.0,
+                    "clima_surface_pressure": 930.0,
+                    "clima_precipitation": 0.0,
+                    "clima_temperature_media_30d": 22.0,
+                    "clima_temperature_anomalia": 2.0,
+                    "clima_temperatura_faixa": "quente",
+                    "clima_sensacao_faixa": "quente",
+                    "clima_umidade_faixa": "umido",
+                    "clima_pressao_faixa": "pressao_normal",
+                    "clima_chuva_faixa": "sem_chuva",
+                    "clima_anomalia_faixa": "normal",
+                    "clima_assinatura": "quente|quente|umido|pressao_normal|sem_chuva|normal",
+                }
+            )
+        target_climate = dict(climate_rows[-1])
+        target_climate["concurso"] = 14
+
+        model = build_context_model(
+            pd.DataFrame(rows),
+            climate_features=pd.DataFrame(climate_rows),
+            target_climate=target_climate,
+        )
+        detail = score_contextual_candidate(list(range(1, 16)), model)
+
+        self.assertEqual(model.target.clima_temperatura_faixa, "quente")
+        self.assertIn("score_climatico", detail)
+        self.assertIn("contexto_clima_temperature_2m", detail)
+        self.assertGreaterEqual(float(detail["score_climatico"]), 0.0)
+        self.assertLessEqual(float(detail["score_climatico"]), 100.0)
 
     def test_transition_outputs_compare_consecutive_draws(self) -> None:
         rows = []
@@ -549,12 +594,14 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("Lotofacil Analytics", html)
         self.assertIn("/api/status", html)
         self.assertIn("/api/transitions", html)
+        self.assertIn("/api/climate", html)
         self.assertIn("/api/predict", html)
         self.assertIn("/api/predict-single", html)
         self.assertIn("/api/mandel", html)
         self.assertIn("/report", html)
         self.assertIn("/mandel-report", html)
         self.assertIn("Comparação visual dos scores", html)
+        self.assertIn("Score climático", html)
         self.assertIn("score_portfolio_jogo_2", html)
         self.assertIn("Decisão protegida", html)
         self.assertIn("Anti-falso-negativo", html)

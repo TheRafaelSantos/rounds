@@ -9,7 +9,7 @@ from typing import Dict, List, Mapping, Sequence, Tuple
 import pandas as pd
 
 from .backtest_lotofacil import PICK_SIZE
-from .context_features import ContextModel, build_context_model, digital_root, score_contextual_candidate
+from .context_features import CLIMATE_CONTEXT_COLUMNS, ContextModel, build_context_model, digital_root, score_contextual_candidate
 from .normalize import DEZENAS
 from .optimizer import (
     MAX_DEZENA,
@@ -36,19 +36,22 @@ FULL_SUM = sum(NUMBERS)
 FULL_EVEN_COUNT = sum(1 for n in NUMBERS if n % 2 == 0)
 DEFAULT_EXHAUSTIVE_WEIGHTS: Dict[str, float] = {
     "estatistico": 0.17,
-    "historico": 0.12,
-    "atraso": 0.06,
-    "combinatorio": 0.11,
-    "localidade_numerologia": 0.18,
-    "cenarios": 0.12,
-    "contrarian": 0.09,
-    "transicao": 0.10,
-    "nao_repeticao_exata": 0.05,
+    "historico": 0.115,
+    "atraso": 0.055,
+    "combinatorio": 0.105,
+    "localidade_numerologia": 0.165,
+    "climatico": 0.03,
+    "cenarios": 0.115,
+    "contrarian": 0.085,
+    "transicao": 0.105,
+    "nao_repeticao_exata": 0.055,
 }
 WEIGHT_ALIASES = {
     "contextual": "localidade_numerologia",
     "lua_local_numerologia": "localidade_numerologia",
     "localidade_numerologia_lua_contexto": "localidade_numerologia",
+    "clima": "climatico",
+    "weather": "climatico",
 }
 
 
@@ -77,6 +80,7 @@ def format_exhaustive_weights(weights: Mapping[str, float]) -> str:
         "atraso",
         "combinatorio",
         "localidade_numerologia",
+        "climatico",
         "cenarios",
         "contrarian",
         "transicao",
@@ -84,6 +88,7 @@ def format_exhaustive_weights(weights: Mapping[str, float]) -> str:
     ]
     labels = {
         "localidade_numerologia": "localidade_numerologia_lua_contexto",
+        "climatico": "clima_temperatura_umidade_pressao_chuva",
     }
     return ";".join(f"{labels.get(key, key)}={float(weights[key]):.4f}" for key in ordered)
 
@@ -197,6 +202,51 @@ def _context_number_scores(model: ContextModel) -> Dict[int, float]:
     return scores
 
 
+def _target_climate_keys(model: ContextModel) -> List[Tuple[str, float]]:
+    target = model.target
+    column_weights = {
+        "clima_temperatura_faixa": 0.18,
+        "clima_sensacao_faixa": 0.14,
+        "clima_umidade_faixa": 0.16,
+        "clima_pressao_faixa": 0.14,
+        "clima_chuva_faixa": 0.14,
+        "clima_anomalia_faixa": 0.16,
+        "clima_assinatura": 0.08,
+    }
+    keys: List[Tuple[str, float]] = []
+    for column, prefix in CLIMATE_CONTEXT_COLUMNS:
+        value = getattr(target, column, "indisponivel")
+        if value and str(value) != "indisponivel":
+            keys.append((f"{prefix}:{value}", column_weights.get(column, 0.10)))
+    return keys
+
+
+def _climate_number_scores(model: ContextModel) -> Dict[int, float]:
+    keys = _target_climate_keys(model)
+    total_weight = sum(weight for _key, weight in keys)
+    scores = {n: 50.0 for n in NUMBERS}
+    if total_weight <= 0:
+        return scores
+
+    weighted = {n: 0.0 for n in NUMBERS}
+    for key, weight in keys:
+        sample_size = int(model.sample_sizes.get(key, 0))
+        counter = model.counters.get(key, Counter())
+        if sample_size <= 0:
+            for n in NUMBERS:
+                weighted[n] += weight * 50.0
+            continue
+        expected = sample_size * PICK_SIZE / MAX_DEZENA
+        shrink = min(1.0, sample_size / 40.0)
+        for n in NUMBERS:
+            raw = 50.0 + (float(counter.get(n, 0)) - expected) * 6.0
+            weighted[n] += weight * max(0.0, min(100.0, 50.0 + (raw - 50.0) * shrink))
+
+    for n in NUMBERS:
+        scores[n] = round(max(0.0, min(100.0, weighted[n] / total_weight)), 6)
+    return scores
+
+
 def _pair_selected_sum_from_omitted(
     *,
     total_pair_sum: float,
@@ -263,6 +313,8 @@ def build_exhaustive_candidates(
     draw_minute: int = 0,
     limit_combinations: int | None = None,
     weights: Mapping[str, float] | None = None,
+    climate_features: pd.DataFrame | None = None,
+    target_climate: Mapping[str, object] | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if concursos.empty:
         raise ValueError("Base de concursos vazia. Rode primeiro: python main.py --update")
@@ -276,13 +328,21 @@ def build_exhaustive_candidates(
     delays = _delays(draws)
     pair_freq = _pair_counter(draws)
     common_signatures = _common_range_signatures(draws)
-    context_model = build_context_model(df, draw_hour=draw_hour, draw_minute=draw_minute)
+    context_model = build_context_model(
+        df,
+        draw_hour=draw_hour,
+        draw_minute=draw_minute,
+        climate_features=climate_features,
+        target_climate=target_climate,
+    )
     context_scores = _context_number_scores(context_model)
+    climate_scores = _climate_number_scores(context_model)
     transition_model = build_transition_model(df)
 
     recent_total = sum(float(recent_freq.get(n, 0)) for n in NUMBERS)
     delay_total = sum(float(delays.get(n, 0)) for n in NUMBERS)
     context_total = sum(float(context_scores.get(n, 50.0)) for n in NUMBERS)
+    climate_total = sum(float(climate_scores.get(n, 50.0)) for n in NUMBERS)
     pair_values = list(pair_freq.values())
     pair_median = float(pd.Series(pair_values).median()) if pair_values else 0.0
     pair_matrix = [[0.0 for _ in range(MAX_DEZENA + 1)] for _ in range(MAX_DEZENA + 1)]
@@ -350,6 +410,8 @@ def build_exhaustive_candidates(
 
         selected_context_sum = context_total - sum(float(context_scores.get(int(n), 50.0)) for n in omitted)
         score_contextual = round(max(0.0, min(100.0, selected_context_sum / PICK_SIZE)), 6)
+        selected_climate_sum = climate_total - sum(float(climate_scores.get(int(n), 50.0)) for n in omitted)
+        score_climatico = round(max(0.0, min(100.0, selected_climate_sum / PICK_SIZE)), 6)
         score_cenarios = _scenario_score(
             total=selected_sum,
             max_run=max_run,
@@ -371,6 +433,7 @@ def build_exhaustive_candidates(
             + resolved_weights["atraso"] * score_atraso
             + resolved_weights["combinatorio"] * score_combinatorio
             + resolved_weights["localidade_numerologia"] * score_localidade_numerologia
+            + resolved_weights["climatico"] * score_climatico
             + resolved_weights["cenarios"] * score_cenarios
             + resolved_weights["contrarian"] * score_contrarian
             + resolved_weights["transicao"] * score_transicao
@@ -390,6 +453,7 @@ def build_exhaustive_candidates(
                 "score_combinatorio": score_combinatorio,
                 "score_contextual": score_contextual,
                 "score_localidade_numerologia": score_localidade_numerologia,
+                "score_climatico": score_climatico,
                 "score_cenarios": score_cenarios,
                 "score_contrarian": score_contrarian,
                 "score_transicao": score_transicao,
@@ -419,6 +483,22 @@ def build_exhaustive_candidates(
                 "total_combinacoes_avaliadas": int(TOTAL_COMBINATIONS if limit_combinations is None else evaluated),
                 "concurso_base_inicial": int(df["concurso"].min()),
                 "concurso_base_final": int(df["concurso"].max()),
+                "contexto_clima_status": context_model.target.clima_status,
+                "contexto_clima_fonte": context_model.target.clima_fonte,
+                "contexto_clima_temperature_2m": context_model.target.clima_temperature_2m,
+                "contexto_clima_apparent_temperature": context_model.target.clima_apparent_temperature,
+                "contexto_clima_relative_humidity_2m": context_model.target.clima_relative_humidity_2m,
+                "contexto_clima_surface_pressure": context_model.target.clima_surface_pressure,
+                "contexto_clima_precipitation": context_model.target.clima_precipitation,
+                "contexto_clima_temperature_media_30d": context_model.target.clima_temperature_media_30d,
+                "contexto_clima_temperature_anomalia": context_model.target.clima_temperature_anomalia,
+                "contexto_clima_temperatura_faixa": context_model.target.clima_temperatura_faixa,
+                "contexto_clima_sensacao_faixa": context_model.target.clima_sensacao_faixa,
+                "contexto_clima_umidade_faixa": context_model.target.clima_umidade_faixa,
+                "contexto_clima_pressao_faixa": context_model.target.clima_pressao_faixa,
+                "contexto_clima_chuva_faixa": context_model.target.clima_chuva_faixa,
+                "contexto_clima_anomalia_faixa": context_model.target.clima_anomalia_faixa,
+                "contexto_clima_assinatura": context_model.target.clima_assinatura,
             }
             item = (score_final, idx, row)
             if len(heap) < keep_top:
@@ -466,6 +546,22 @@ def build_exhaustive_candidates(
             {"metrica": "uf_sorteio_assumida", "valor": context_model.target.uf_sorteio_assumida},
             {"metrica": "bairro_sorteio_assumido", "valor": context_model.target.bairro_sorteio_assumido or "indisponivel_na_base"},
             {"metrica": "observacao_localidade", "valor": context_model.target.observacao_localidade},
+            {"metrica": "clima_status", "valor": context_model.target.clima_status},
+            {"metrica": "clima_fonte", "valor": context_model.target.clima_fonte},
+            {"metrica": "clima_temperature_2m", "valor": context_model.target.clima_temperature_2m},
+            {"metrica": "clima_apparent_temperature", "valor": context_model.target.clima_apparent_temperature},
+            {"metrica": "clima_relative_humidity_2m", "valor": context_model.target.clima_relative_humidity_2m},
+            {"metrica": "clima_surface_pressure", "valor": context_model.target.clima_surface_pressure},
+            {"metrica": "clima_precipitation", "valor": context_model.target.clima_precipitation},
+            {"metrica": "clima_temperature_media_30d", "valor": context_model.target.clima_temperature_media_30d},
+            {"metrica": "clima_temperature_anomalia", "valor": context_model.target.clima_temperature_anomalia},
+            {"metrica": "clima_temperatura_faixa", "valor": context_model.target.clima_temperatura_faixa},
+            {"metrica": "clima_sensacao_faixa", "valor": context_model.target.clima_sensacao_faixa},
+            {"metrica": "clima_umidade_faixa", "valor": context_model.target.clima_umidade_faixa},
+            {"metrica": "clima_pressao_faixa", "valor": context_model.target.clima_pressao_faixa},
+            {"metrica": "clima_chuva_faixa", "valor": context_model.target.clima_chuva_faixa},
+            {"metrica": "clima_anomalia_faixa", "valor": context_model.target.clima_anomalia_faixa},
+            {"metrica": "clima_assinatura", "valor": context_model.target.clima_assinatura},
             {"metrica": "transicao_pares_consecutivos_analisados", "valor": transition_model.summary.get("pares_consecutivos_analisados", 0)},
             {"metrica": "transicao_media_repetidas", "valor": transition_model.summary.get("media_repetidas", "")},
             {"metrica": "transicao_mediana_repetidas", "valor": transition_model.summary.get("mediana_repetidas", "")},

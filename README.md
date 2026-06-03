@@ -20,8 +20,9 @@ Fases implementadas:
 10. **Fase 10 - Interface local e build de executavel**.
 11. **Camada superior - jogo unico, validacao exaustiva, ablation test e ajuste de pesos**.
 12. **Camada Mandel/bolao - universo recomendado, desdobramento completo e fechamento reduzido**.
+13. **Camada climatica experimental - temperatura, sensacao termica, umidade, pressao, chuva, anomalia e faixas climaticas**.
 
-Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos, backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio, motor exaustivo `ensemble_score_v4_exaustivo_transicao` e camada de decisao acima do motor atual.
+Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos, backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio, motor exaustivo `ensemble_score_v4_exaustivo_transicao`, camada climatica e camada de decisao acima do motor atual.
 
 O codigo antigo de Mega-Sena foi preservado. A implementacao nova da Lotofacil fica isolada em:
 
@@ -34,6 +35,12 @@ Endpoint publico da CAIXA:
 `https://servicebus2.caixa.gov.br/portaldeloterias/api/lotofacil`
 
 Risco: o endpoint e publico, mas pode mudar formato ou ficar indisponivel. Por isso o sistema salva JSON bruto, usa timeout, retentativas, logs e validacoes.
+
+Fonte climatica usada na camada experimental:
+
+`https://open-meteo.com/en/docs/historical-weather-api`
+
+O clima e consultado por cidade/UF do sorteio, horario assumido de Brasilia e cache local. Essa camada e testavel, mas tem plausibilidade baixa como causa fisica direta do resultado.
 
 ## Instalar no Windows
 
@@ -88,6 +95,25 @@ Gerar historico por dezena:
 ```powershell
 python main.py --dezenas
 ```
+
+Gerar camada climatica historica:
+
+```powershell
+python main.py --climate --draw-hour 20 --draw-minute 0
+```
+
+Para testar sem processar todas as cidades/UF de uma vez:
+
+```powershell
+python main.py --climate --climate-max-locations 2 --draw-hour 20 --draw-minute 0
+```
+
+Arquivos gerados:
+
+1. `data/processed/lotofacil_clima.csv`;
+2. `data/processed/lotofacil_clima_summary.csv`;
+3. `data/exports/lotofacil_clima.xlsx`;
+4. cache Open-Meteo em `data/raw/climate_open_meteo`.
 
 Gerar combinacoes e assinaturas:
 
@@ -437,9 +463,10 @@ Componentes do score:
 3. anti-popularidade humana: penaliza excesso de padroes populares, mas sem bloquear linhas, colunas, diagonais e sequencias quando elas aparecem como cenario historico plausivel;
 4. combinatorio: penaliza pares historicamente muito frequentes;
 5. contextual: considera data do proximo concurso, dia da semana, mes, trimestre, semestre, estacao do ano, fase da lua no horario de Brasilia e numerologia exploratoria;
-6. cenarios: reforca soma baixa/media/alta, sequencia forte, visual forte, assinatura historica por faixas e faixa alta 21-25;
-7. contrarian: monitora dezenas que os jogos anteriores penalizaram demais, como 01, 13 e 22;
-8. transicao: compara cada concurso com o concurso seguinte e aprende repetidas, entradas, saidas, delta de soma e mudanca por faixas.
+6. climatico experimental: temperatura, sensacao termica, umidade relativa, pressao atmosferica, chuva, anomalia de temperatura e faixas climaticas do local/horario do sorteio;
+7. cenarios: reforca soma baixa/media/alta, sequencia forte, visual forte, assinatura historica por faixas e faixa alta 21-25;
+8. contrarian: monitora dezenas que os jogos anteriores penalizaram demais, como 01, 13 e 22;
+9. transicao: compara cada concurso com o concurso seguinte e aprende repetidas, entradas, saidas, delta de soma e mudanca por faixas.
 
 O score final `ensemble_score_v2` combina esses blocos com pesos documentados na aba/CSV de resumo do otimizador. A geracao de candidatos usa perfis variados, incluindo `soma_baixa`, `sequencia_forte`, `visual_forte`, `contrarian_controlado`, `faixa_alta_reforcada`, `assinatura_historica`, `weighted_temporal`, `monte_carlo_filtrado` e `genetico_simples`.
 
@@ -450,7 +477,8 @@ No `ensemble_score_v4_exaustivo_transicao`, tambem entram:
 3. numerologia da data, do concurso, do dia+mes e das dezenas;
 4. localidade historica por local, cidade e UF;
 5. bairro somente se existir coluna confiavel na base. Na base atual da CAIXA, bairro nao esta disponivel;
-6. transicao sequencial `concurso N -> concurso N+1`, incluindo dezenas que ficaram, entraram, sairam e continuaram fora.
+6. clima historico do local do sorteio, quando `python main.py --climate` ja foi executado;
+7. transicao sequencial `concurso N -> concurso N+1`, incluindo dezenas que ficaram, entraram, sairam e continuaram fora.
 
 Essa fase gera candidatos para a selecao final. Ela nao afirma que os candidatos sao previsoes garantidas.
 
@@ -487,7 +515,8 @@ Contexto usado na previsao final:
 4. fase, idade e iluminacao aproximada da lua no horario de Brasilia;
 5. numerologia exploratoria da data, do concurso e de dia+mes;
 6. score contextual historico por dia da semana, periodo do ano e fase lunar;
-7. localidade historica do sorteio: local, cidade e UF quando informados pela API da CAIXA.
+7. localidade historica do sorteio: local, cidade e UF quando informados pela API da CAIXA;
+8. clima do local/horario assumido do sorteio: temperatura, sensacao termica, umidade, pressao, chuva, anomalia contra media recente e faixas climaticas.
 
 A API da CAIXA nao informa a hora exata dentro do JSON historico. O sistema usa 20:00 no fuso `America/Sao_Paulo` como padrao configuravel:
 
@@ -499,7 +528,7 @@ Os dois jogos gerados sao sempre jogos completos de 15 dezenas. O sistema nao di
 
 ## Camada superior de decisao
 
-Essa camada nao substitui as analises existentes. Ela fica por cima do motor `ensemble_score_v4_exaustivo_transicao` e usa os mesmos blocos: estatistica, historico, atrasos, combinacoes, lua, dia da semana, periodo do ano, numerologia, localidade, cenarios, contrarian e transicao sequencial.
+Essa camada nao substitui as analises existentes. Ela fica por cima do motor `ensemble_score_v4_exaustivo_transicao` e usa os mesmos blocos: estatistica, historico, atrasos, combinacoes, lua, dia da semana, periodo do ano, numerologia, localidade, clima, cenarios, contrarian e transicao sequencial.
 
 Na selecao final, a camada superior agora aplica uma decisao protegida:
 
@@ -508,6 +537,7 @@ Na selecao final, a camada superior agora aplica uma decisao protegida:
 3. `score_cobertura_risco_falso_negativo`: mede quantas dezenas menos consensuais, mas presentes em candidatos fortes, foram preservadas no jogo;
 4. `dezenas_risco_falso_negativo`: lista as dezenas protegidas para reduzir o risco de ficarem fora do jogo unico e dos jogos finais;
 5. `dezenas_nucleo_consenso`: mostra o nucleo que aparece com mais forca no top de candidatos.
+6. `score_climatico`: mede a aderencia do candidato ao historico de dezenas em condicoes climaticas parecidas.
 
 Comandos principais:
 

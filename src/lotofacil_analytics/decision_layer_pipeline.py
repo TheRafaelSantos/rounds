@@ -5,6 +5,7 @@ import logging
 
 import pandas as pd
 
+from .climate_runtime import load_runtime_climate
 from .config import AppConfig
 from .decision_layer import (
     ExhaustiveValidationSummary,
@@ -38,6 +39,12 @@ class DecisionLayerPipeline:
     ) -> SinglePredictionSummary:
         concursos = load_processed_csv(self.config.processed_csv_path)
         existing_candidates = load_processed_csv(self.config.optimizer_candidates_csv_path)
+        climate_features, target_climate = load_runtime_climate(
+            config=self.config,
+            concursos=concursos,
+            draw_hour=draw_hour,
+            draw_minute=draw_minute,
+        )
         summary = build_single_prediction(
             concursos,
             existing_candidates=existing_candidates,
@@ -54,6 +61,8 @@ class DecisionLayerPipeline:
             prediction_csv_path=self.config.single_prediction_csv_path,
             report_path=self.config.single_prediction_report_path,
             excel_path=self.config.single_prediction_excel_path,
+            climate_features=climate_features,
+            target_climate=target_climate,
         )
         self.logger.info("Jogo unico salvo em %s", self.config.single_prediction_csv_path)
         self.logger.info("Relatorio do jogo unico salvo em %s", self.config.single_prediction_report_path)
@@ -71,6 +80,12 @@ class DecisionLayerPipeline:
         weight_profile: str,
     ) -> ExhaustiveValidationSummary:
         concursos = load_processed_csv(self.config.processed_csv_path)
+        climate_features, _target_climate = load_runtime_climate(
+            config=self.config,
+            concursos=concursos,
+            draw_hour=draw_hour,
+            draw_minute=draw_minute,
+        )
         results, summary = run_exhaustive_single_backtest(
             concursos,
             n_eval=n_eval,
@@ -80,6 +95,7 @@ class DecisionLayerPipeline:
             draw_minute=draw_minute,
             exhaustive_limit=exhaustive_limit,
             weight_profile=weight_profile,
+            climate_features=climate_features,
         )
         return self._save_validation_outputs(
             action="Backtest Exaustivo Jogo Unico",
@@ -103,6 +119,12 @@ class DecisionLayerPipeline:
         exhaustive_limit: int | None,
     ) -> ExhaustiveValidationSummary:
         concursos = load_processed_csv(self.config.processed_csv_path)
+        climate_features, _target_climate = load_runtime_climate(
+            config=self.config,
+            concursos=concursos,
+            draw_hour=draw_hour,
+            draw_minute=draw_minute,
+        )
         results, summary = run_ablation_test(
             concursos,
             n_eval=n_eval,
@@ -111,6 +133,7 @@ class DecisionLayerPipeline:
             draw_hour=draw_hour,
             draw_minute=draw_minute,
             exhaustive_limit=exhaustive_limit,
+            climate_features=climate_features,
         )
         return self._save_validation_outputs(
             action="Ablation Test",
@@ -134,6 +157,12 @@ class DecisionLayerPipeline:
         exhaustive_limit: int | None,
     ) -> ExhaustiveValidationSummary:
         concursos = load_processed_csv(self.config.processed_csv_path)
+        climate_features, _target_climate = load_runtime_climate(
+            config=self.config,
+            concursos=concursos,
+            draw_hour=draw_hour,
+            draw_minute=draw_minute,
+        )
         results, summary, best_payload = run_weight_tuning(
             concursos,
             n_eval=n_eval,
@@ -142,6 +171,7 @@ class DecisionLayerPipeline:
             draw_hour=draw_hour,
             draw_minute=draw_minute,
             exhaustive_limit=exhaustive_limit,
+            climate_features=climate_features,
         )
         self.config.tuned_weights_json_path.parent.mkdir(parents=True, exist_ok=True)
         self.config.tuned_weights_json_path.write_text(

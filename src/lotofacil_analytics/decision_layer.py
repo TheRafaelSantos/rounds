@@ -33,7 +33,8 @@ WEIGHT_PROFILE_PRESETS: Dict[str, Dict[str, float]] = {
         "historico": 0.09,
         "atraso": 0.05,
         "combinatorio": 0.09,
-        "localidade_numerologia": 0.32,
+        "localidade_numerologia": 0.29,
+        "climatico": 0.03,
         "cenarios": 0.10,
         "contrarian": 0.07,
         "transicao": 0.09,
@@ -44,7 +45,8 @@ WEIGHT_PROFILE_PRESETS: Dict[str, Dict[str, float]] = {
         "historico": 0.23,
         "atraso": 0.08,
         "combinatorio": 0.11,
-        "localidade_numerologia": 0.14,
+        "localidade_numerologia": 0.11,
+        "climatico": 0.03,
         "cenarios": 0.09,
         "contrarian": 0.05,
         "transicao": 0.10,
@@ -55,7 +57,8 @@ WEIGHT_PROFILE_PRESETS: Dict[str, Dict[str, float]] = {
         "historico": 0.10,
         "atraso": 0.05,
         "combinatorio": 0.26,
-        "localidade_numerologia": 0.14,
+        "localidade_numerologia": 0.11,
+        "climatico": 0.03,
         "cenarios": 0.08,
         "contrarian": 0.07,
         "transicao": 0.10,
@@ -66,7 +69,8 @@ WEIGHT_PROFILE_PRESETS: Dict[str, Dict[str, float]] = {
         "historico": 0.09,
         "atraso": 0.05,
         "combinatorio": 0.09,
-        "localidade_numerologia": 0.14,
+        "localidade_numerologia": 0.11,
+        "climatico": 0.03,
         "cenarios": 0.10,
         "contrarian": 0.24,
         "transicao": 0.10,
@@ -77,7 +81,8 @@ WEIGHT_PROFILE_PRESETS: Dict[str, Dict[str, float]] = {
         "historico": 0.09,
         "atraso": 0.05,
         "combinatorio": 0.11,
-        "localidade_numerologia": 0.13,
+        "localidade_numerologia": 0.10,
+        "climatico": 0.03,
         "cenarios": 0.10,
         "contrarian": 0.08,
         "transicao": 0.09,
@@ -88,7 +93,8 @@ WEIGHT_PROFILE_PRESETS: Dict[str, Dict[str, float]] = {
         "historico": 0.09,
         "atraso": 0.05,
         "combinatorio": 0.09,
-        "localidade_numerologia": 0.14,
+        "localidade_numerologia": 0.11,
+        "climatico": 0.03,
         "cenarios": 0.28,
         "contrarian": 0.06,
         "transicao": 0.10,
@@ -99,7 +105,8 @@ WEIGHT_PROFILE_PRESETS: Dict[str, Dict[str, float]] = {
         "historico": 0.12,
         "atraso": 0.20,
         "combinatorio": 0.09,
-        "localidade_numerologia": 0.14,
+        "localidade_numerologia": 0.11,
+        "climatico": 0.03,
         "cenarios": 0.09,
         "contrarian": 0.06,
         "transicao": 0.10,
@@ -110,7 +117,8 @@ WEIGHT_PROFILE_PRESETS: Dict[str, Dict[str, float]] = {
         "historico": 0.10,
         "atraso": 0.05,
         "combinatorio": 0.09,
-        "localidade_numerologia": 0.15,
+        "localidade_numerologia": 0.12,
+        "climatico": 0.03,
         "cenarios": 0.10,
         "contrarian": 0.07,
         "transicao": 0.25,
@@ -125,6 +133,7 @@ ABLATION_VARIANTS: List[Tuple[str, str | None]] = [
     ("sem_atraso", "atraso"),
     ("sem_combinatorio", "combinatorio"),
     ("sem_lua_local_numerologia", "localidade_numerologia"),
+    ("sem_clima", "climatico"),
     ("sem_cenarios", "cenarios"),
     ("sem_contrarian", "contrarian"),
     ("sem_transicao", "transicao"),
@@ -244,6 +253,7 @@ def _has_default_exhaustive_candidates(
     *,
     expected_base_final: int | None = None,
     expected_target_date: str | None = None,
+    require_climate: bool = False,
 ) -> bool:
     if existing_candidates is None or existing_candidates.empty:
         return False
@@ -257,6 +267,8 @@ def _has_default_exhaustive_candidates(
         return False
     if str(existing_candidates["source_model"].iloc[0]) != SOURCE_MODEL_EXAUSTIVO:
         return False
+    if require_climate and "score_climatico" not in existing_candidates.columns:
+        return False
     if expected_base_final is not None:
         if "concurso_base_final" not in existing_candidates.columns:
             return False
@@ -269,6 +281,17 @@ def _has_default_exhaustive_candidates(
         if str(existing_candidates["contexto_data_proximo_concurso"].iloc[0]) != str(expected_target_date):
             return False
     return True
+
+
+def _target_climate_from_features(climate_features: pd.DataFrame | None, concurso: int) -> Mapping[str, object] | None:
+    if climate_features is None or climate_features.empty or "concurso" not in climate_features.columns:
+        return None
+    df = climate_features.copy()
+    df["concurso"] = pd.to_numeric(df["concurso"], errors="coerce")
+    rows = df[df["concurso"] == int(concurso)]
+    if rows.empty:
+        return None
+    return rows.iloc[0].to_dict()
 
 
 def _candidate_rows_to_single_output(
@@ -298,6 +321,19 @@ def _candidate_rows_to_single_output(
     row["cidade_sorteio_assumida"] = target_context.cidade_sorteio_assumida
     row["uf_sorteio_assumida"] = target_context.uf_sorteio_assumida
     row["bairro_sorteio_assumido"] = target_context.bairro_sorteio_assumido
+    row["clima_temperature_2m"] = target_context.clima_temperature_2m
+    row["clima_apparent_temperature"] = target_context.clima_apparent_temperature
+    row["clima_relative_humidity_2m"] = target_context.clima_relative_humidity_2m
+    row["clima_surface_pressure"] = target_context.clima_surface_pressure
+    row["clima_precipitation"] = target_context.clima_precipitation
+    row["clima_temperature_anomalia"] = target_context.clima_temperature_anomalia
+    row["clima_temperatura_faixa"] = target_context.clima_temperatura_faixa
+    row["clima_sensacao_faixa"] = target_context.clima_sensacao_faixa
+    row["clima_umidade_faixa"] = target_context.clima_umidade_faixa
+    row["clima_pressao_faixa"] = target_context.clima_pressao_faixa
+    row["clima_chuva_faixa"] = target_context.clima_chuva_faixa
+    row["clima_anomalia_faixa"] = target_context.clima_anomalia_faixa
+    row["clima_assinatura"] = target_context.clima_assinatura
     row["weight_profile"] = weight_profile
     row["score_weights"] = format_exhaustive_weights(score_weights)
     row["aviso"] = AVISO_TECNICO
@@ -316,6 +352,19 @@ def _candidate_rows_to_single_output(
         "cidade_sorteio_assumida",
         "uf_sorteio_assumida",
         "bairro_sorteio_assumido",
+        "clima_temperature_2m",
+        "clima_apparent_temperature",
+        "clima_relative_humidity_2m",
+        "clima_surface_pressure",
+        "clima_precipitation",
+        "clima_temperature_anomalia",
+        "clima_temperatura_faixa",
+        "clima_sensacao_faixa",
+        "clima_umidade_faixa",
+        "clima_pressao_faixa",
+        "clima_chuva_faixa",
+        "clima_anomalia_faixa",
+        "clima_assinatura",
         "weight_profile",
         "score_weights",
         "jogo",
@@ -327,6 +376,7 @@ def _candidate_rows_to_single_output(
         "score_atraso",
         "score_combinatorio",
         "score_contextual",
+        "score_climatico",
         "score_contexto_protegido",
         "score_consenso_top",
         "score_cobertura_risco_falso_negativo",
@@ -381,10 +431,12 @@ def build_single_prediction_report(
         f"- Localidade usada: {target_context.local_sorteio_assumido or '-'} | {target_context.cidade_sorteio_assumida or '-'} | {target_context.uf_sorteio_assumida or '-'}",
         f"- Bairro: {target_context.bairro_sorteio_assumido or 'indisponivel na base atual'}",
         f"- Observacao localidade: {target_context.observacao_localidade}",
+        f"- Clima: temperatura {target_context.clima_temperature_2m if target_context.clima_temperature_2m is not None else 'indisponivel'} C; sensacao {target_context.clima_apparent_temperature if target_context.clima_apparent_temperature is not None else 'indisponivel'} C; umidade {target_context.clima_relative_humidity_2m if target_context.clima_relative_humidity_2m is not None else 'indisponivel'}%; pressao {target_context.clima_surface_pressure if target_context.clima_surface_pressure is not None else 'indisponivel'} hPa; chuva {target_context.clima_precipitation if target_context.clima_precipitation is not None else 'indisponivel'} mm",
+        f"- Faixas climaticas: temperatura={target_context.clima_temperatura_faixa}; sensacao={target_context.clima_sensacao_faixa}; umidade={target_context.clima_umidade_faixa}; pressao={target_context.clima_pressao_faixa}; chuva={target_context.clima_chuva_faixa}; anomalia={target_context.clima_anomalia_faixa}",
         "",
         "## Jogo unico selecionado",
         "",
-        f"- Jogo unico: {row['nums']} | score_final={float(row['score_final']):.6f} | score_decisao_protegida={float(row.get('score_decisao_protegida', 0)):.6f} | score_transicao={float(row.get('score_transicao', 0)):.6f}",
+        f"- Jogo unico: {row['nums']} | score_final={float(row['score_final']):.6f} | score_decisao_protegida={float(row.get('score_decisao_protegida', 0)):.6f} | score_transicao={float(row.get('score_transicao', 0)):.6f} | score_climatico={float(row.get('score_climatico', 50)):.6f}",
         f"- Contexto protegido: score_contextual={float(row.get('score_contextual', 0)):.6f}; score_contexto_protegido={float(row.get('score_contexto_protegido', 0)):.6f}; criterio={row.get('criterio_contexto_protegido', '-')}",
         f"- Anti-falso-negativo: {int(float(row.get('qtd_dezenas_risco_falso_negativo', 0) or 0))} dezenas de risco no jogo ({row.get('dezenas_risco_falso_negativo', '')})",
         "",
@@ -393,11 +445,12 @@ def build_single_prediction_report(
         "1. Mantem o score exaustivo atual como base.",
         "2. Seleciona apenas um jogo completo de 15 dezenas usando a decisao protegida.",
         "3. Explicita o perfil de pesos usado.",
-        "4. Mantem lua, numerologia, localidade, periodo do ano, dia da semana, historico, atrasos, combinacoes, cenarios e contrarian no score.",
+        "4. Mantem lua, numerologia, localidade, periodo do ano, dia da semana, clima, historico, atrasos, combinacoes, cenarios e contrarian no score.",
         "5. Adiciona transicao historica concurso a concurso: repetidas, entradas, saidas e mudanca estrutural.",
         "6. Usa contexto protegido: lua, numerologia, dia da semana e localidade viram bonus, mas nao excluem sozinhos dezenas fortes por outros sinais.",
         "7. Usa anti-falso-negativo: protege dezenas menos consensuais que aparecem em candidatos fortes para reduzir exclusao total.",
-        "8. Nao divide a previsao entre dois jogos.",
+        "8. Usa score climatico experimental com temperatura, sensacao termica, umidade, pressao, chuva, anomalia de temperatura e faixas climaticas.",
+        "9. Nao divide a previsao entre dois jogos.",
         "",
         f"Combinacoes possiveis avaliaveis da Lotofacil: {TOTAL_COMBINATIONS}.",
         f"Aviso: {AVISO_TECNICO}",
@@ -422,6 +475,8 @@ def build_single_prediction(
     prediction_csv_path: Path,
     report_path: Path,
     excel_path: Path,
+    climate_features: pd.DataFrame | None = None,
+    target_climate: Mapping[str, object] | None = None,
 ) -> SinglePredictionSummary:
     if concursos.empty:
         raise ValueError("Historico local nao encontrado. Rode primeiro: python main.py --update")
@@ -430,7 +485,7 @@ def build_single_prediction(
     last = df.iloc[-1]
     last_concurso = int(last["concurso"])
     last_date = str(last["data_sorteio"])
-    target_context = build_target_context(df, draw_hour=draw_hour, draw_minute=draw_minute)
+    target_context = build_target_context(df, draw_hour=draw_hour, draw_minute=draw_minute, target_climate=target_climate)
     weights = weights_for_profile(weight_profile)
 
     if engine == "exaustivo":
@@ -441,6 +496,7 @@ def build_single_prediction(
                 existing_candidates,
                 expected_base_final=last_concurso,
                 expected_target_date=target_context.data_proximo_concurso,
+                require_climate=climate_features is not None and not climate_features.empty,
             )
         ):
             candidates = existing_candidates.copy()
@@ -452,6 +508,8 @@ def build_single_prediction(
                 draw_minute=draw_minute,
                 limit_combinations=exhaustive_limit,
                 weights=weights,
+                climate_features=climate_features,
+                target_climate=target_climate,
             )
     else:
         candidates, _summary = build_optimized_candidates(
@@ -553,6 +611,7 @@ def _result_row(
         "score_combinatorio": float(best.get("score_combinatorio", 0.0)),
         "score_contextual": float(best.get("score_contextual", 0.0)),
         "score_localidade_numerologia": float(best.get("score_localidade_numerologia", 0.0)),
+        "score_climatico": float(best.get("score_climatico", 0.0)),
         "score_cenarios": float(best.get("score_cenarios", 0.0)),
         "score_contrarian": float(best.get("score_contrarian", 0.0)),
         "score_transicao": float(best.get("score_transicao", 0.0)),
@@ -566,6 +625,18 @@ def _result_row(
         "local_sorteio_assumido": _summary_value(optimizer_summary, "local_sorteio_assumido", ""),
         "cidade_sorteio_assumida": _summary_value(optimizer_summary, "cidade_sorteio_assumida", ""),
         "uf_sorteio_assumida": _summary_value(optimizer_summary, "uf_sorteio_assumida", ""),
+        "clima_temperature_2m": _summary_value(optimizer_summary, "clima_temperature_2m", ""),
+        "clima_apparent_temperature": _summary_value(optimizer_summary, "clima_apparent_temperature", ""),
+        "clima_relative_humidity_2m": _summary_value(optimizer_summary, "clima_relative_humidity_2m", ""),
+        "clima_surface_pressure": _summary_value(optimizer_summary, "clima_surface_pressure", ""),
+        "clima_precipitation": _summary_value(optimizer_summary, "clima_precipitation", ""),
+        "clima_temperature_anomalia": _summary_value(optimizer_summary, "clima_temperature_anomalia", ""),
+        "clima_temperatura_faixa": _summary_value(optimizer_summary, "clima_temperatura_faixa", ""),
+        "clima_sensacao_faixa": _summary_value(optimizer_summary, "clima_sensacao_faixa", ""),
+        "clima_umidade_faixa": _summary_value(optimizer_summary, "clima_umidade_faixa", ""),
+        "clima_pressao_faixa": _summary_value(optimizer_summary, "clima_pressao_faixa", ""),
+        "clima_chuva_faixa": _summary_value(optimizer_summary, "clima_chuva_faixa", ""),
+        "clima_anomalia_faixa": _summary_value(optimizer_summary, "clima_anomalia_faixa", ""),
     }
     if extra:
         row.update(dict(extra))
@@ -614,6 +685,7 @@ def run_exhaustive_single_backtest(
     weight_profile: str = "padrao_atual",
     weights: Mapping[str, float] | None = None,
     extra: Mapping[str, object] | None = None,
+    climate_features: pd.DataFrame | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if concursos.empty:
         raise ValueError("Base de concursos vazia. Rode primeiro: python main.py --update")
@@ -638,6 +710,7 @@ def run_exhaustive_single_backtest(
         real = draws[idx]
         concurso = int(df.loc[idx, "concurso"])
         data_sorteio = str(df.loc[idx, "data_sorteio"])
+        target_climate = _target_climate_from_features(climate_features, concurso)
         candidates, optimizer_summary = build_exhaustive_candidates(
             train_df,
             top_games=max(1, int(top_games)),
@@ -645,6 +718,8 @@ def run_exhaustive_single_backtest(
             draw_minute=draw_minute,
             limit_combinations=exhaustive_limit,
             weights=resolved_weights,
+            climate_features=climate_features,
+            target_climate=target_climate,
         )
         best = _best_candidate(candidates)
         rows.append(
@@ -674,6 +749,7 @@ def run_ablation_test(
     draw_hour: int = 20,
     draw_minute: int = 0,
     exhaustive_limit: int | None = None,
+    climate_features: pd.DataFrame | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     base_weights = weights_for_profile("padrao_atual")
     result_frames: List[pd.DataFrame] = []
@@ -689,6 +765,7 @@ def run_ablation_test(
             exhaustive_limit=exhaustive_limit,
             weight_profile=variant_name,
             weights=variant_weights,
+            climate_features=climate_features,
             extra={
                 "ablation_removed_component": disabled_component or "",
                 "ablation_base_profile": "padrao_atual",
@@ -720,6 +797,7 @@ def run_weight_tuning(
     draw_minute: int = 0,
     exhaustive_limit: int | None = None,
     profiles: Sequence[str] | None = None,
+    climate_features: pd.DataFrame | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, object]]:
     selected_profiles = list(profiles or WEIGHT_PROFILE_PRESETS.keys())
     result_frames: List[pd.DataFrame] = []
@@ -735,6 +813,7 @@ def run_weight_tuning(
             exhaustive_limit=exhaustive_limit,
             weight_profile=profile_name,
             weights=profile_weights,
+            climate_features=climate_features,
             extra={"tuning_profile": profile_name},
         )
         result_frames.append(results)

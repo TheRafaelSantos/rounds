@@ -14,6 +14,7 @@ from lotofacil_analytics.config import AppConfig
 from lotofacil_analytics.auditoria_pipeline import AuditoriaPipeline
 from lotofacil_analytics.build_executable import build_executable
 from lotofacil_analytics.backtest_pipeline import BacktestPipeline
+from lotofacil_analytics.climate_pipeline import ClimatePipeline
 from lotofacil_analytics.combinacoes_pipeline import CombinacoesPipeline
 from lotofacil_analytics.dezenas_pipeline import DezenasPipeline
 from lotofacil_analytics.decision_layer import WEIGHT_PROFILE_PRESETS
@@ -58,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--dezenas", action="store_true", help="Gera historico por dezena da Fase 3.")
     mode.add_argument("--combinacoes", action="store_true", help="Gera combinacoes e assinaturas da Fase 4.")
     mode.add_argument("--transitions", action="store_true", help="Analisa transicoes concurso N contra N+1.")
+    mode.add_argument("--climate", action="store_true", help="Baixa/gera features climaticas historicas por localidade e horario.")
     mode.add_argument("--backtest", action="store_true", help="Executa backtest walk-forward da Fase 5.")
     mode.add_argument("--audit", action="store_true", help="Executa auditoria estatistica exploratoria da Fase 6.")
     mode.add_argument("--ml", action="store_true", help="Executa ML temporal leve da Fase 7.")
@@ -109,6 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--qty", type=int, default=10, help="Quantidade de jogos do --generate-games.")
     parser.add_argument("--draw-hour", type=int, default=20, help="Hora de Brasilia usada para contexto lunar do proximo sorteio.")
     parser.add_argument("--draw-minute", type=int, default=0, help="Minuto de Brasilia usado para contexto lunar do proximo sorteio.")
+    parser.add_argument("--climate-max-locations", type=int, default=0, help="Limite de cidades/UF no --climate; 0 processa todas.")
+    parser.add_argument("--climate-force", action="store_true", help="Ignora cache local do Open-Meteo no --climate.")
     parser.add_argument("--actual-numbers", default=None, help="15 dezenas sorteadas para --analyze-result.")
     parser.add_argument("--result-label", default="resultado", help="Rotulo do resultado analisado.")
     parser.add_argument("--result-concurso", type=int, default=None, help="Numero do concurso analisado em --analyze-result.")
@@ -142,6 +146,7 @@ def main() -> int:
         or args.dezenas
         or args.combinacoes
         or args.transitions
+        or args.climate
         or args.backtest
         or args.audit
         or args.ml
@@ -221,6 +226,13 @@ def main() -> int:
                 draw_hour=args.draw_hour,
                 draw_minute=args.draw_minute,
             )
+        elif args.climate:
+            summary = ClimatePipeline(config=config, logger=logger).run(
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+                max_locations=args.climate_max_locations,
+                force=args.climate_force,
+            )
         elif args.predict_single:
             summary = DecisionLayerPipeline(config=config, logger=logger).predict_single(
                 seed=args.seed,
@@ -276,6 +288,12 @@ def main() -> int:
                 FeaturePipeline(config=config, logger=logger).build_base_features()
                 DezenasPipeline(config=config, logger=logger).build_history()
                 CombinacoesPipeline(config=config, logger=logger).build_combinacoes()
+                ClimatePipeline(config=config, logger=logger).run(
+                    draw_hour=args.draw_hour,
+                    draw_minute=args.draw_minute,
+                    max_locations=args.climate_max_locations,
+                    force=args.climate_force,
+                )
                 BacktestPipeline(config=config, logger=logger).run(
                     n_eval=args.n_eval,
                     min_history=args.min_history,
