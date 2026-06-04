@@ -5,24 +5,52 @@ import random
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import combinations
 from pathlib import Path
-from typing import Dict, List, Mapping, Sequence
+from typing import Dict, List, Mapping, Sequence, Tuple
 
+import numpy as np
 import pandas as pd
 
 from .backtest_lotofacil import compute_hits
 from .exhaustive_optimizer import (
     DEFAULT_EXHAUSTIVE_WEIGHTS,
-    build_exhaustive_candidates,
+    EXHAUSTIVE_SOURCE_MODEL,
+    FULL_EVEN_COUNT,
+    FULL_SUM,
+    NUMBERS,
+    OMITTED_SIZE,
+    PAIR_COUNT,
+    TOTAL_COMBINATIONS,
+    _climate_number_scores,
+    _column_counts_from_omitted,
+    _common_range_signatures,
+    _contrarian_score,
+    _context_number_scores,
+    _delays,
+    _diagonal_strength_from_omitted,
+    _distance_outside_band,
+    _historical_profile,
+    _max_run_from_omitted,
+    _pair_counter,
+    _pair_selected_sum_from_omitted,
+    _recent_freq,
+    _scenario_score,
+    _score_0_100,
     format_exhaustive_weights,
     resolve_exhaustive_weights,
 )
+from .context_features import build_context_model
 from .normalize import DEZENAS
+from .temporal_deep import temporal_deep_number_scores
+from .transition_analysis import build_transition_model, score_transition_from_omitted
 from .predictor import select_final_games
 from .storage import sanitize_dataframe_for_tabular_output
 
 
 WEIGHT_COMPONENTS = tuple(DEFAULT_EXHAUSTIVE_WEIGHTS.keys())
+CACHE_SCHEMA_VERSION = 1
+CACHE_SCORE_COMPONENTS = tuple(component for component in WEIGHT_COMPONENTS if component != "nao_repeticao_exata")
 
 
 @dataclass(frozen=True)
@@ -277,6 +305,354 @@ def _write_excel_snapshot(
         attempts_tail.to_excel(writer, index=False, sheet_name="ultimas_tentativas")
 
 
+def _mask_from_selected(selected: Sequence[int]) -> int:
+    mask = 0
+    for n in selected:
+        mask |= 1 << (int(n) - 1)
+    return int(mask)
+
+
+def _nums_from_mask(mask: int) -> List[int]:
+    return [n for n in NUMBERS if int(mask) & (1 << (int(n) - 1))]
+
+
+def _format_mask(mask: int) -> str:
+    return _format_nums(_nums_from_mask(mask))
+
+
+def _cache_paths(cache_dir: Path, target_concurso: int) -> Dict[str, Path]:
+    base = cache_dir / f"concurso_{int(target_concurso)}"
+    return {
+        "base": base,
+        "meta": base / "meta.json",
+        "masks": base / "masks.npy",
+        "scores": base / "scores.npy",
+        "soma": base / "soma.npy",
+        "qtd_pares": base / "qtd_pares.npy",
+        "overlap_ultimo": base / "overlap_ultimo.npy",
+        "maior_sequencia": base / "maior_sequencia.npy",
+        "ja_saiu": base / "ja_saiu.npy",
+    }
+
+
+def _cache_meta_matches(meta: Mapping[str, object], *, target_concurso: int, train_df: pd.DataFrame, exhaustive_limit: int | None, draw_hour: int, draw_minute: int) -> bool:
+    if not meta:
+        return False
+    expected_rows = int(TOTAL_COMBINATIONS if exhaustive_limit is None else min(int(exhaustive_limit), int(TOTAL_COMBINATIONS)))
+    try:
+        return (
+            int(meta.get("schema_version", 0)) == CACHE_SCHEMA_VERSION
+            and int(meta.get("target_concurso", 0)) == int(target_concurso)
+            and int(meta.get("concurso_base_final", 0)) == int(pd.to_numeric(train_df["concurso"], errors="coerce").max())
+            and int(meta.get("draw_hour", -1)) == int(draw_hour)
+            and int(meta.get("draw_minute", -1)) == int(draw_minute)
+            and meta.get("exhaustive_limit") == (int(exhaustive_limit) if exhaustive_limit is not None else None)
+            and int(meta.get("rows", 0)) == expected_rows
+            and list(meta.get("score_components", [])) == list(CACHE_SCORE_COMPONENTS)
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _cache_is_complete(paths: Mapping[str, Path], *, expected_rows: int) -> bool:
+    required = ["meta", "masks", "scores", "soma", "qtd_pares", "overlap_ultimo", "maior_sequencia", "ja_saiu"]
+    if any(not paths[name].exists() for name in required):
+        return False
+    try:
+        scores = np.load(paths["scores"], mmap_mode="r")
+        masks = np.load(paths["masks"], mmap_mode="r")
+        return int(scores.shape[0]) == int(expected_rows) and int(masks.shape[0]) == int(expected_rows)
+    except (OSError, ValueError):
+        return False
+
+
+def _cleanup_old_caches(cache_dir: Path, *, keep_concurso: int, keep_last: int = 1) -> None:
+    if not cache_dir.exists():
+        return
+    cache_dirs = [path for path in cache_dir.iterdir() if path.is_dir() and path.name.startswith("concurso_")]
+    parsed: List[Tuple[int, Path]] = []
+    for path in cache_dirs:
+        try:
+            parsed.append((int(path.name.split("_", 1)[1]), path))
+        except (IndexError, ValueError):
+            continue
+    protected = {int(keep_concurso)}
+    if keep_last > 1:
+        for concurso, _path in sorted(parsed, reverse=True)[: int(keep_last)]:
+            protected.add(int(concurso))
+    for concurso, path in parsed:
+        if int(concurso) in protected:
+            continue
+        for child in path.glob("*"):
+            if child.is_file():
+                child.unlink()
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+
+
+def _build_component_cache(
+    *,
+    train_df: pd.DataFrame,
+    target_concurso: int,
+    climate_features: pd.DataFrame | None,
+    exhaustive_limit: int | None,
+    draw_hour: int,
+    draw_minute: int,
+    cache_dir: Path,
+) -> Dict[str, object]:
+    paths = _cache_paths(cache_dir, target_concurso)
+    expected_rows = int(TOTAL_COMBINATIONS if exhaustive_limit is None else min(int(exhaustive_limit), int(TOTAL_COMBINATIONS)))
+    meta = _load_json(paths["meta"])
+    if _cache_meta_matches(
+        meta,
+        target_concurso=target_concurso,
+        train_df=train_df,
+        exhaustive_limit=exhaustive_limit,
+        draw_hour=draw_hour,
+        draw_minute=draw_minute,
+    ) and _cache_is_complete(paths, expected_rows=expected_rows):
+        return {"status": "hit", "rows": expected_rows, "cache_path": str(paths["base"])}
+
+    if paths["base"].exists():
+        for child in paths["base"].glob("*"):
+            if child.is_file():
+                child.unlink()
+    paths["base"].mkdir(parents=True, exist_ok=True)
+    _cleanup_old_caches(cache_dir, keep_concurso=target_concurso)
+
+    df = train_df.copy().sort_values("concurso").reset_index(drop=True)
+    draws = [_nums_from_row(row) for _, row in df.iterrows()]
+    profile = _historical_profile(draws)
+    last_draw = set(draws[-1])
+    recent_freq = _recent_freq(draws, window=100)
+    delays = _delays(draws)
+    pair_freq = _pair_counter(draws)
+    common_signatures = _common_range_signatures(draws)
+    context_model = build_context_model(
+        df,
+        draw_hour=draw_hour,
+        draw_minute=draw_minute,
+        climate_features=climate_features,
+        target_climate=_target_climate_from_features(climate_features, target_concurso),
+    )
+    context_scores = _context_number_scores(context_model)
+    climate_scores = _climate_number_scores(context_model)
+    temporal_deep_scores = temporal_deep_number_scores(df, target_date=context_model.target.data_proximo_concurso)
+    transition_model = build_transition_model(df)
+
+    recent_total = sum(float(recent_freq.get(n, 0)) for n in NUMBERS)
+    delay_total = sum(float(delays.get(n, 0)) for n in NUMBERS)
+    context_total = sum(float(context_scores.get(n, 50.0)) for n in NUMBERS)
+    climate_total = sum(float(climate_scores.get(n, 50.0)) for n in NUMBERS)
+    temporal_deep_total = sum(float(temporal_deep_scores.get(n, 50.0)) for n in NUMBERS)
+    pair_values = list(pair_freq.values())
+    pair_median = float(pd.Series(pair_values).median()) if pair_values else 0.0
+    pair_matrix = [[0.0 for _ in range(max(NUMBERS) + 1)] for _ in range(max(NUMBERS) + 1)]
+    for (a, b), value in pair_freq.items():
+        pair_matrix[int(a)][int(b)] = float(value)
+        pair_matrix[int(b)][int(a)] = float(value)
+    total_pair_sum = sum(pair_matrix[a][b] for a, b in combinations(NUMBERS, 2))
+    incident_pair_sum = {
+        n: sum(pair_matrix[n][other] for other in NUMBERS if other != n)
+        for n in NUMBERS
+    }
+    delay_series = pd.Series(list(delays.values()), dtype="float64")
+    median_delay = float(delay_series.median()) if len(delay_series) else 0.0
+    existing_draws = {tuple(draw) for draw in draws}
+
+    masks = np.zeros(expected_rows, dtype=np.uint32)
+    scores = np.zeros((expected_rows, len(CACHE_SCORE_COMPONENTS)), dtype=np.float32)
+    soma = np.zeros(expected_rows, dtype=np.uint16)
+    qtd_pares = np.zeros(expected_rows, dtype=np.uint8)
+    overlap_ultimo = np.zeros(expected_rows, dtype=np.uint8)
+    maior_sequencia = np.zeros(expected_rows, dtype=np.uint8)
+    ja_saiu = np.zeros(expected_rows, dtype=np.uint8)
+
+    evaluated = 0
+    component_index = {component: idx for idx, component in enumerate(CACHE_SCORE_COMPONENTS)}
+    for omitted in combinations(NUMBERS, OMITTED_SIZE):
+        if evaluated >= expected_rows:
+            break
+        omitted_set = set(int(n) for n in omitted)
+        selected = tuple(n for n in NUMBERS if n not in omitted_set)
+        selected_sum = FULL_SUM - sum(omitted)
+        selected_pairs = FULL_EVEN_COUNT - sum(1 for n in omitted if n % 2 == 0)
+        ranges = [5, 5, 5, 5, 5]
+        for n in omitted:
+            ranges[(int(n) - 1) // 5] -= 1
+        columns = _column_counts_from_omitted(omitted)
+        max_run = _max_run_from_omitted(omitted_set)
+        overlap_last = len(set(selected) & last_draw)
+        diagonal_strength = _diagonal_strength_from_omitted(omitted_set)
+        exact_historical = tuple(selected) in existing_draws
+
+        signature = "-".join(str(value) for value in ranges)
+        stat_penalty = 0.0
+        stat_penalty += _distance_outside_band(selected_sum, profile["sum_p10"], profile["sum_p90"]) / 1.6
+        stat_penalty += _distance_outside_band(selected_pairs, profile["pairs_p10"], profile["pairs_p90"]) * 3.0
+        stat_penalty += 0.0 if signature in common_signatures else sum(abs(value - 3) for value in ranges) * 1.8
+        stat_penalty += abs(overlap_last - profile["median_overlap"]) * 2.2
+        stat_penalty += max(0.0, max_run - profile["run_p95"]) * 2.2
+        score_estatistico = _score_0_100(stat_penalty)
+
+        selected_recent_sum = recent_total - sum(float(recent_freq.get(int(n), 0)) for n in omitted)
+        avg_recent = selected_recent_sum / len(selected)
+        expected_recent = 100 * len(selected) / len(NUMBERS)
+        score_historico = _score_0_100(abs(avg_recent - expected_recent) * 1.2)
+
+        selected_delay_sum = delay_total - sum(float(delays.get(int(n), 0)) for n in omitted)
+        avg_delay = selected_delay_sum / len(selected)
+        score_atraso = _score_0_100(abs(avg_delay - median_delay) * 1.4)
+
+        selected_pair_sum = _pair_selected_sum_from_omitted(
+            total_pair_sum=total_pair_sum,
+            incident_pair_sum=incident_pair_sum,
+            pair_matrix=pair_matrix,
+            omitted=omitted,
+        )
+        avg_pair_freq = selected_pair_sum / PAIR_COUNT
+        score_combinatorio = _score_0_100(max(0.0, avg_pair_freq - pair_median) / 12.0)
+
+        selected_context_sum = context_total - sum(float(context_scores.get(int(n), 50.0)) for n in omitted)
+        score_contextual = round(max(0.0, min(100.0, selected_context_sum / len(selected))), 6)
+        selected_climate_sum = climate_total - sum(float(climate_scores.get(int(n), 50.0)) for n in omitted)
+        score_climatico = round(max(0.0, min(100.0, selected_climate_sum / len(selected))), 6)
+        selected_temporal_deep_sum = temporal_deep_total - sum(float(temporal_deep_scores.get(int(n), 50.0)) for n in omitted)
+        score_temporal_profundo = round(max(0.0, min(100.0, selected_temporal_deep_sum / len(selected))), 6)
+        score_cenarios = _scenario_score(
+            total=selected_sum,
+            max_run=max_run,
+            ranges=ranges,
+            columns=columns,
+            diagonal_strength=diagonal_strength,
+            profile=profile,
+            common_signatures=common_signatures,
+            selected=selected,
+        )
+        score_contrarian = _contrarian_score(selected, max_run=max_run, ranges=ranges, columns=columns)
+        transition_detail = score_transition_from_omitted(omitted, transition_model)
+
+        masks[evaluated] = _mask_from_selected(selected)
+        scores[evaluated, component_index["estatistico"]] = score_estatistico
+        scores[evaluated, component_index["historico"]] = score_historico
+        scores[evaluated, component_index["atraso"]] = score_atraso
+        scores[evaluated, component_index["combinatorio"]] = score_combinatorio
+        scores[evaluated, component_index["localidade_numerologia"]] = score_contextual
+        scores[evaluated, component_index["climatico"]] = score_climatico
+        scores[evaluated, component_index["temporal_profundo"]] = score_temporal_profundo
+        scores[evaluated, component_index["cenarios"]] = score_cenarios
+        scores[evaluated, component_index["contrarian"]] = score_contrarian
+        scores[evaluated, component_index["transicao"]] = float(transition_detail["score_transicao"])
+        soma[evaluated] = int(selected_sum)
+        qtd_pares[evaluated] = int(selected_pairs)
+        overlap_ultimo[evaluated] = int(overlap_last)
+        maior_sequencia[evaluated] = int(max_run)
+        ja_saiu[evaluated] = int(exact_historical)
+        evaluated += 1
+
+    if evaluated != expected_rows:
+        masks = masks[:evaluated]
+        scores = scores[:evaluated]
+        soma = soma[:evaluated]
+        qtd_pares = qtd_pares[:evaluated]
+        overlap_ultimo = overlap_ultimo[:evaluated]
+        maior_sequencia = maior_sequencia[:evaluated]
+        ja_saiu = ja_saiu[:evaluated]
+
+    np.save(paths["masks"], masks)
+    np.save(paths["scores"], scores)
+    np.save(paths["soma"], soma)
+    np.save(paths["qtd_pares"], qtd_pares)
+    np.save(paths["overlap_ultimo"], overlap_ultimo)
+    np.save(paths["maior_sequencia"], maior_sequencia)
+    np.save(paths["ja_saiu"], ja_saiu)
+
+    meta_payload = {
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "created_at": _now(),
+        "target_concurso": int(target_concurso),
+        "rows": int(evaluated),
+        "score_components": list(CACHE_SCORE_COMPONENTS),
+        "exhaustive_limit": int(exhaustive_limit) if exhaustive_limit is not None else None,
+        "draw_hour": int(draw_hour),
+        "draw_minute": int(draw_minute),
+        "concurso_base_inicial": int(pd.to_numeric(df["concurso"], errors="coerce").min()),
+        "concurso_base_final": int(pd.to_numeric(df["concurso"], errors="coerce").max()),
+        "source_model": EXHAUSTIVE_SOURCE_MODEL,
+    }
+    _write_json(paths["meta"], meta_payload)
+    return {"status": "built", "rows": int(evaluated), "cache_path": str(paths["base"])}
+
+
+def _load_cached_top_candidates(
+    *,
+    target_concurso: int,
+    cache_dir: Path,
+    weights: Mapping[str, float],
+    top_games: int,
+) -> Tuple[pd.DataFrame, Dict[str, object]]:
+    paths = _cache_paths(cache_dir, target_concurso)
+    meta = _load_json(paths["meta"])
+    if not meta:
+        raise ValueError(f"Cache do concurso {target_concurso} nao encontrado.")
+
+    masks = np.load(paths["masks"], mmap_mode="r")
+    component_scores = np.load(paths["scores"], mmap_mode="r")
+    ja_saiu = np.load(paths["ja_saiu"], mmap_mode="r")
+    resolved = resolve_exhaustive_weights(weights)
+    vector = np.array([float(resolved[component]) for component in CACHE_SCORE_COMPONENTS], dtype=np.float32)
+    score_final = np.asarray(component_scores @ vector, dtype=np.float32)
+    repetition_score = np.where(ja_saiu.astype(np.uint8) == 1, 92.0, 100.0).astype(np.float32)
+    score_final = score_final + (float(resolved["nao_repeticao_exata"]) * repetition_score)
+
+    keep = max(2, min(int(top_games), int(score_final.shape[0])))
+    if keep >= int(score_final.shape[0]):
+        top_indices = np.arange(int(score_final.shape[0]))
+    else:
+        top_indices = np.argpartition(score_final, -keep)[-keep:]
+    top_masks = np.asarray(masks[top_indices], dtype=np.uint32)
+    order = np.lexsort((top_masks, -score_final[top_indices]))
+    ranked_indices = top_indices[order]
+
+    soma = np.load(paths["soma"], mmap_mode="r")
+    qtd_pares = np.load(paths["qtd_pares"], mmap_mode="r")
+    overlap_ultimo = np.load(paths["overlap_ultimo"], mmap_mode="r")
+    maior_sequencia = np.load(paths["maior_sequencia"], mmap_mode="r")
+    rows: List[Dict[str, object]] = []
+    for rank, idx in enumerate(ranked_indices.tolist(), start=1):
+        row: Dict[str, object] = {
+            "rank": int(rank),
+            "nums": _format_mask(int(masks[idx])),
+            "source_model": EXHAUSTIVE_SOURCE_MODEL,
+            "metodo": EXHAUSTIVE_SOURCE_MODEL,
+            "score_final": round(float(score_final[idx]), 6),
+            "soma": int(soma[idx]),
+            "qtd_pares": int(qtd_pares[idx]),
+            "overlap_ultimo": int(overlap_ultimo[idx]),
+            "maior_sequencia": int(maior_sequencia[idx]),
+            "ja_saiu_exatamente_no_historico": int(ja_saiu[idx]),
+            "total_combinacoes_avaliadas": int(meta.get("rows", len(masks))),
+            "concurso_base_inicial": int(meta.get("concurso_base_inicial", 0)),
+            "concurso_base_final": int(meta.get("concurso_base_final", 0)),
+        }
+        for component_idx, component in enumerate(CACHE_SCORE_COMPONENTS):
+            value = float(component_scores[idx, component_idx])
+            row[f"score_{component}"] = round(value, 6)
+            if component == "localidade_numerologia":
+                row["score_contextual"] = round(value, 6)
+        rows.append(row)
+
+    candidates = sanitize_dataframe_for_tabular_output(pd.DataFrame(rows))
+    cache_info = {
+        "status": "ranked",
+        "rows": int(meta.get("rows", len(masks))),
+        "cache_path": str(paths["base"]),
+    }
+    return candidates, cache_info
+
+
 def _base_weight_presets() -> List[Dict[str, float]]:
     return [
         dict(DEFAULT_EXHAUSTIVE_WEIGHTS),
@@ -362,18 +738,23 @@ def _evaluate_attempt(
     max_overlap: int,
     draw_hour: int,
     draw_minute: int,
+    cache_dir: Path,
 ) -> Dict[str, object]:
-    candidates, _summary = build_exhaustive_candidates(
-        train_df,
-        top_games=max(2, int(top_games)),
+    cache_build = _build_component_cache(
+        train_df=train_df,
+        target_concurso=target_concurso,
+        climate_features=climate_features,
+        exhaustive_limit=exhaustive_limit,
         draw_hour=draw_hour,
         draw_minute=draw_minute,
-        limit_combinations=exhaustive_limit,
-        weights=weights,
-        climate_features=climate_features,
-        target_climate=_target_climate_from_features(climate_features, int(target_concurso)),
+        cache_dir=cache_dir,
     )
-    candidates = sanitize_dataframe_for_tabular_output(candidates)
+    candidates, cache_rank = _load_cached_top_candidates(
+        target_concurso=target_concurso,
+        cache_dir=cache_dir,
+        weights=weights,
+        top_games=max(2, int(top_games)),
+    )
     if candidates.empty:
         raise ValueError("Motor exaustivo nao gerou candidatos para a tentativa.")
 
@@ -394,6 +775,9 @@ def _evaluate_attempt(
         "candidates_evaluated": int(candidates.iloc[0].get("total_combinacoes_avaliadas", 0)),
         "score_jogo_1": float(final_games.iloc[0].get("score_final", 0.0)),
         "score_jogo_2": float(final_games.iloc[1].get("score_final", 0.0)),
+        "cache_status": str(cache_build["status"]),
+        "cache_rows": int(cache_build["rows"]),
+        "cache_path": str(cache_rank["cache_path"]),
     }
 
 
@@ -450,6 +834,7 @@ def run_calibration_lab(
     average_weights_csv_path: Path,
     excel_path: Path,
     engine_weights_json_path: Path,
+    cache_dir: Path,
 ) -> CalibrationLabSummary:
     if concursos.empty:
         raise ValueError("Historico local nao encontrado. Rode primeiro: python main.py --update")
@@ -494,6 +879,7 @@ def run_calibration_lab(
     state["max_overlap"] = int(max_overlap)
     state["draw_hour"] = int(draw_hour)
     state["draw_minute"] = int(draw_minute)
+    state["cache_dir"] = str(cache_dir)
     state["status"] = status
 
     while True:
@@ -557,6 +943,7 @@ def run_calibration_lab(
                 "solved_contests": sorted(solved),
                 "solved_count": int(len(solved)),
                 "average_weights": average_winner_weights or {},
+                "current_cache_status": "building_or_loading",
                 "last_attempt_started_at": _now(),
                 "updated_at": _now(),
             }
@@ -576,6 +963,7 @@ def run_calibration_lab(
             max_overlap=max_overlap,
             draw_hour=draw_hour,
             draw_minute=draw_minute,
+            cache_dir=cache_dir,
         )
         elapsed_attempt = time.perf_counter() - attempt_started
         attempts_this_run += 1
@@ -600,6 +988,9 @@ def run_calibration_lab(
             "max_overlap": int(max_overlap),
             "score_jogo_1": float(evaluation["score_jogo_1"]),
             "score_jogo_2": float(evaluation["score_jogo_2"]),
+            "cache_status": str(evaluation["cache_status"]),
+            "cache_rows": int(evaluation["cache_rows"]),
+            "cache_path": str(evaluation["cache_path"]),
             "score_weights": format_exhaustive_weights(weights),
         }
         for component, value in weights.items():
@@ -616,6 +1007,10 @@ def run_calibration_lab(
                 "last_hits_jogo_2": int(evaluation["acertos_jogo_2"]),
                 "last_best_hits": int(evaluation["melhor_acerto"]),
                 "last_best_game": str(evaluation["melhor_jogo"]),
+                "last_cache_status": str(evaluation["cache_status"]),
+                "last_cache_rows": int(evaluation["cache_rows"]),
+                "last_cache_path": str(evaluation["cache_path"]),
+                "current_cache_status": str(evaluation["cache_status"]),
                 "best_hits_current": int(best_current.get("hits", 0)),
                 "best_game_current": str(best_current.get("game", "")),
                 "best_attempt_current": int(best_current.get("attempt", 0)),

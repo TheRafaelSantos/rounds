@@ -9,6 +9,8 @@ O projeto roda em dois containers Docker:
 
 Os arquivos de progresso ficam no volume `./data`, fora da imagem Docker. Se o container reiniciar, o processo continua do estado salvo.
 
+A calibracao usa cache por concurso em `data/processed/lotofacil_calibration_lab_cache`. A primeira tentativa de um concurso cria a matriz de scores; as tentativas seguintes reaproveitam essa matriz e apenas recalculam pesos.
+
 ## Comandos principais na VPS
 
 Entre na pasta do projeto:
@@ -67,6 +69,7 @@ docker compose restart lotofacil-calibrator
 /opt/lotofacil/data/processed/lotofacil_calibration_lab_winners.csv
 /opt/lotofacil/data/processed/lotofacil_calibration_lab_average_weights.csv
 /opt/lotofacil/data/processed/lotofacil_engine_calibrated_weights.json
+/opt/lotofacil/data/processed/lotofacil_calibration_lab_cache/
 ```
 
 ## Como reverter

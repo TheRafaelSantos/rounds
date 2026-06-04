@@ -175,6 +175,8 @@ python main.py --calibration-lab --lab-from-concurso 2500 --lab-top-games 5000 -
 
 Esse comando roda em loop. Para cada concurso historico a partir do 2500, ele usa apenas os concursos anteriores como treino, gera 2 jogos com pesos diferentes, confere o resultado real somente depois da geracao e so avanca para o proximo concurso quando um dos dois jogos acertar as 15 dezenas. Se o processo for interrompido, rode o mesmo comando novamente e ele continua do estado salvo.
 
+Para acelerar, a primeira tentativa de cada concurso monta um cache local dos scores de componentes. As tentativas seguintes reaproveitam esse cache e so recalculam a combinacao de pesos. O cache fica em `data/processed/lotofacil_calibration_lab_cache`.
+
 Para testar uma execucao curta no Windows:
 
 ```powershell
@@ -187,7 +189,8 @@ Arquivos principais:
 2. `data/processed/lotofacil_calibration_lab_attempts.csv`;
 3. `data/processed/lotofacil_calibration_lab_winners.csv`;
 4. `data/processed/lotofacil_calibration_lab_average_weights.csv`;
-5. `data/processed/lotofacil_engine_calibrated_weights.json`.
+5. `data/processed/lotofacil_engine_calibrated_weights.json`;
+6. `data/processed/lotofacil_calibration_lab_cache/`.
 
 Quando algum concurso e resolvido com 15 pontos, a media dos pesos vencedores e salva em `lotofacil_engine_calibrated_weights.json`. Esse arquivo e carregado automaticamente pelo motor principal de 2 jogos (`--predict` e `--optimize` com motor exaustivo).
 

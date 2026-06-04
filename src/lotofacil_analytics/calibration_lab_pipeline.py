@@ -60,6 +60,7 @@ class CalibrationLabPipeline:
             average_weights_csv_path=self.config.calibration_lab_average_weights_csv_path,
             excel_path=self.config.calibration_lab_excel_path,
             engine_weights_json_path=self.config.engine_calibration_weights_json_path,
+            cache_dir=self.config.calibration_lab_cache_dir,
         )
         self.logger.info("Calibracao 24/7 estado salvo em %s", self.config.calibration_lab_state_json_path)
         return summary

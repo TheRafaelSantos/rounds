@@ -353,3 +353,7 @@ class AppConfig:
     @property
     def calibration_lab_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_calibration_lab.xlsx"
+
+    @property
+    def calibration_lab_cache_dir(self) -> Path:
+        return self.processed_dir / "lotofacil_calibration_lab_cache"

@@ -531,6 +531,7 @@ class LotofacilValidationTest(unittest.TestCase):
                 "average_weights_csv_path": base / "lab_average_weights.csv",
                 "excel_path": base / "lab.xlsx",
                 "engine_weights_json_path": base / "engine_weights.json",
+                "cache_dir": base / "lab_cache",
             }
             summary = run_calibration_lab(
                 concursos,
@@ -560,11 +561,14 @@ class LotofacilValidationTest(unittest.TestCase):
             attempts = pd.read_csv(paths["attempts_csv_path"])
             self.assertEqual(summary.attempts_this_run, 2)
             self.assertEqual(len(attempts), 2)
+            self.assertEqual(attempts.loc[0, "cache_status"], "built")
+            self.assertEqual(attempts.loc[1, "cache_status"], "hit")
             self.assertIn("status", status["state"])
             self.assertEqual(len(status["recent_attempts"]), 2)
             self.assertTrue(paths["state_json_path"].exists())
             self.assertTrue(paths["summary_csv_path"].exists())
             self.assertTrue(paths["average_weights_csv_path"].exists())
+            self.assertTrue((paths["cache_dir"] / "concurso_14" / "scores.npy").exists())
 
     def test_transition_outputs_compare_consecutive_draws(self) -> None:
         rows = []

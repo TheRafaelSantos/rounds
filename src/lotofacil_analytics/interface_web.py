@@ -270,6 +270,9 @@ def _html_page() -> str:
           statusCard('Concursos resolvidos', state.solved_count) +
           statusCard('Tentativas totais', state.total_attempts) +
           statusCard('Tempo desta execução', state.elapsed_seconds_current_run ? Number(state.elapsed_seconds_current_run).toFixed(0) + 's' : '-') +
+          statusCard('Cache atual', state.current_cache_status || state.last_cache_status || '-') +
+          statusCard('Cache última tentativa', state.last_cache_status || '-') +
+          statusCard('Combinações no cache', state.last_cache_rows || '-') +
         '</div>' +
         '<div class="exclusives"><strong>Melhor jogo atual:</strong> ' + escapeHtml(state.best_game_current || '-') + '</div>' +
         '<section class="comparison"><h2>Média atual dos pesos vencedores</h2>' + weightRows(weights) + '</section>' +
