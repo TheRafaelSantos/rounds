@@ -10,7 +10,7 @@ import pandas as pd
 
 from lotofacil_analytics.auditoria import build_auditoria
 from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
-from lotofacil_analytics.calibration_lab import load_calibration_lab_status, run_calibration_lab
+from lotofacil_analytics.calibration_lab import _append_csv, _read_csv, load_calibration_lab_status, run_calibration_lab
 from lotofacil_analytics.calibration_pilot import run_calibration_pilot
 from lotofacil_analytics.climate_pipeline import ClimatePipeline
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
@@ -569,6 +569,34 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertTrue(paths["summary_csv_path"].exists())
             self.assertTrue(paths["average_weights_csv_path"].exists())
             self.assertTrue((paths["cache_dir"] / "concurso_14" / "scores.npy").exists())
+
+    def test_calibration_lab_attempt_csv_evolves_cache_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "attempts.csv"
+            old_row = {
+                "target_concurso": 2500,
+                "tentativa": 1,
+                "score_jogo_1": 90.0,
+                "score_jogo_2": 88.0,
+                "score_weights": "estatistico=1.0000",
+                "peso_estatistico": 1.0,
+            }
+            new_row = {
+                **old_row,
+                "tentativa": 2,
+                "cache_status": "hit",
+                "cache_rows": 100,
+                "cache_path": "cache/concurso_2500",
+            }
+
+            _append_csv(path, old_row)
+            _append_csv(path, new_row)
+            migrated = _read_csv(path)
+
+            self.assertEqual(len(migrated), 2)
+            self.assertIn("cache_status", migrated.columns)
+            self.assertEqual(str(migrated.loc[1, "cache_status"]), "hit")
+            self.assertEqual(str(migrated.loc[1, "score_weights"]), "estatistico=1.0000")
 
     def test_transition_outputs_compare_consecutive_draws(self) -> None:
         rows = []

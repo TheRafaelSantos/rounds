@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 import random
 import time
 from dataclasses import dataclass
@@ -51,6 +52,7 @@ from .storage import sanitize_dataframe_for_tabular_output
 WEIGHT_COMPONENTS = tuple(DEFAULT_EXHAUSTIVE_WEIGHTS.keys())
 CACHE_SCHEMA_VERSION = 1
 CACHE_SCORE_COMPONENTS = tuple(component for component in WEIGHT_COMPONENTS if component != "nao_repeticao_exata")
+ATTEMPT_CACHE_COLUMNS = ["cache_status", "cache_rows", "cache_path"]
 
 
 @dataclass(frozen=True)
@@ -126,18 +128,71 @@ def _write_json(path: Path, payload: Mapping[str, object]) -> None:
 def _read_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
-    return pd.read_csv(path, encoding="utf-8-sig")
+    try:
+        return pd.read_csv(path, encoding="utf-8-sig")
+    except pd.errors.ParserError:
+        return _read_csv_flexible(path)
 
 
 def _append_csv(path: Path, row: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame([dict(row)]).to_csv(
+    new_row = pd.DataFrame([dict(row)])
+    if not path.exists():
+        new_row.to_csv(path, index=False, encoding="utf-8-sig")
+        return
+
+    existing = _read_csv(path)
+    existing_cols = list(existing.columns)
+    row_cols = list(new_row.columns)
+    missing_in_existing = [column for column in row_cols if column not in existing_cols]
+    missing_in_row = [column for column in existing_cols if column not in row_cols]
+    if missing_in_existing or missing_in_row:
+        columns = existing_cols + missing_in_existing
+        merged = pd.concat(
+            [
+                existing.reindex(columns=columns),
+                new_row.reindex(columns=columns),
+            ],
+            ignore_index=True,
+        )
+        merged.to_csv(path, index=False, encoding="utf-8-sig")
+        return
+
+    new_row.to_csv(
         path,
         mode="a",
-        header=not path.exists(),
+        header=False,
         index=False,
         encoding="utf-8-sig",
     )
+
+
+def _read_csv_flexible(path: Path) -> pd.DataFrame:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.reader(handle))
+    if not rows:
+        return pd.DataFrame()
+    header = list(rows[0])
+    data_rows = rows[1:]
+    if not data_rows:
+        return pd.DataFrame(columns=header)
+
+    max_len = max(len(row) for row in data_rows)
+    if "score_weights" in header and "cache_status" not in header and max_len == len(header) + len(ATTEMPT_CACHE_COLUMNS):
+        score_idx = header.index("score_weights")
+        migrated_header = header[:score_idx] + ATTEMPT_CACHE_COLUMNS + header[score_idx:]
+        migrated_rows: List[List[str]] = []
+        for row in data_rows:
+            if len(row) == len(header):
+                migrated_rows.append(row[:score_idx] + ["", "", ""] + row[score_idx:])
+            else:
+                migrated_rows.append((row + [""] * len(migrated_header))[: len(migrated_header)])
+        return pd.DataFrame(migrated_rows, columns=migrated_header)
+
+    if max_len > len(header):
+        header = header + [f"extra_{idx}" for idx in range(1, max_len - len(header) + 1)]
+    normalized = [(row + [""] * len(header))[: len(header)] for row in data_rows]
+    return pd.DataFrame(normalized, columns=header)
 
 
 def _target_climate_from_features(climate_features: pd.DataFrame | None, concurso: int) -> Mapping[str, object] | None:
