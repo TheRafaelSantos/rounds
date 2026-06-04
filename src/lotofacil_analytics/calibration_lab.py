@@ -551,7 +551,6 @@ def run_calibration_lab(
                 "status": status,
                 "current_concurso": int(target_concurso),
                 "current_attempt": int(next_attempt),
-                "current_actual_numbers": _format_nums(actual_nums),
                 "best_hits_current": int(best_current.get("hits", 0)),
                 "best_game_current": str(best_current.get("game", "")),
                 "best_attempt_current": int(best_current.get("attempt", 0)),
@@ -562,6 +561,7 @@ def run_calibration_lab(
                 "updated_at": _now(),
             }
         )
+        state.pop("current_actual_numbers", None)
         _write_json(state_json_path, state)
 
         attempt_started = time.perf_counter()
