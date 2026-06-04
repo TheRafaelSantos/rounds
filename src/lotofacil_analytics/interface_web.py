@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
+from .calibration_lab import load_calibration_lab_status
 from .climate_pipeline import ClimatePipeline
 from .config import AppConfig
 from .decision_layer_pipeline import DecisionLayerPipeline
@@ -54,6 +55,15 @@ def _html_page() -> str:
     .bar-fill.alt { background: #117864; }
     .exclusives { margin-top: 12px; padding-top: 12px; border-top: 1px solid #edf1f2; color: #34495e; font-size: 14px; }
     .comparison { border: 1px solid #d7dbdd; padding: 16px; border-radius: 6px; background: #fbfcfc; }
+    .calibration-panel { border: 1px solid #d7dbdd; padding: 16px; border-radius: 6px; background: #ffffff; }
+    .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 14px 0; }
+    .status-card { border: 1px solid #e5e8e8; border-radius: 6px; padding: 10px; background: #fbfcfc; }
+    .status-label { color: #566573; display: block; font-size: 12px; margin-bottom: 4px; }
+    .status-value { font-size: 18px; font-weight: 700; }
+    .table-scroll { overflow: auto; border: 1px solid #e5e8e8; border-radius: 6px; margin-top: 12px; }
+    table { border-collapse: collapse; width: 100%; min-width: 780px; }
+    th, td { border-bottom: 1px solid #edf1f2; padding: 8px; text-align: left; font-size: 13px; }
+    th { background: #f4f6f7; color: #34495e; }
     .compare-grid { display: grid; gap: 10px; margin-top: 14px; }
     .compare-row { display: grid; grid-template-columns: 150px 1fr 1fr; gap: 12px; align-items: center; }
     .compare-title { color: #34495e; font-size: 13px; }
@@ -82,6 +92,7 @@ def _html_page() -> str:
     <button onclick="predictSingle()">Gerar jogo unico</button>
     <button onclick="predict()">Gerar 2 jogos</button>
     <button onclick="mandel()">Plano Mandel/bolão</button>
+    <button onclick="calibrationStatus()">Calibração 24/7</button>
     <button onclick="window.location='/report'">Baixar relatorio</button>
     <button onclick="window.location='/single-report'">Baixar relatorio jogo unico</button>
     <button onclick="window.location='/mandel-report'">Baixar relatorio Mandel</button>
@@ -222,6 +233,63 @@ def _html_page() -> str:
       '<section class="comparison"><h2>Custos por universo</h2><div class="compare-grid">' + rows + '</div></section>' +
       '<section class="comparison"><h2>Primeiros jogos do fechamento</h2>' + previewRows + '</section>';
     }
+    function statusCard(label, value) {
+      return '<div class="status-card"><span class="status-label">' + escapeHtml(label) + '</span><span class="status-value">' + escapeHtml(value ?? '-') + '</span></div>';
+    }
+    function weightRows(rows) {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return '<div class="muted">Ainda não existe média de pesos vencedores. O arquivo será criado quando algum concurso for resolvido com 15 pontos.</div>';
+      }
+      return '<div class="metrics">' + rows.map(function(row) {
+        return metricBar(row.componente, Number(row.peso_percentual || 0), true);
+      }).join('') + '</div>';
+    }
+    function tableRows(rows, columns) {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return '<div class="muted">Sem registros ainda.</div>';
+      }
+      const header = columns.map(function(column) { return '<th>' + escapeHtml(column.label) + '</th>'; }).join('');
+      const body = rows.map(function(row) {
+        return '<tr>' + columns.map(function(column) {
+          return '<td>' + escapeHtml(row[column.key] ?? '') + '</td>';
+        }).join('') + '</tr>';
+      }).join('');
+      return '<div class="table-scroll"><table><thead><tr>' + header + '</tr></thead><tbody>' + body + '</tbody></table></div>';
+    }
+    function renderCalibration(data) {
+      const state = data.state || {};
+      const recent = data.recent_attempts || [];
+      const winners = data.winners || [];
+      const weights = data.average_weights || [];
+      return '<section class="calibration-panel">' +
+        '<div class="game-head"><h2>Calibração 24/7</h2><span class="tag">' + escapeHtml(state.status || 'sem status') + '</span></div>' +
+        '<div class="status-grid">' +
+          statusCard('Concurso atual', state.current_concurso) +
+          statusCard('Tentativa atual', state.current_attempt) +
+          statusCard('Melhor acerto atual', state.best_hits_current) +
+          statusCard('Concursos resolvidos', state.solved_count) +
+          statusCard('Tentativas totais', state.total_attempts) +
+          statusCard('Tempo desta execução', state.elapsed_seconds_current_run ? Number(state.elapsed_seconds_current_run).toFixed(0) + 's' : '-') +
+        '</div>' +
+        '<div class="exclusives"><strong>Melhor jogo atual:</strong> ' + escapeHtml(state.best_game_current || '-') + '</div>' +
+        '<section class="comparison"><h2>Média atual dos pesos vencedores</h2>' + weightRows(weights) + '</section>' +
+        '<section class="comparison"><h2>Últimas tentativas</h2>' + tableRows(recent, [
+          {key: 'target_concurso', label: 'Concurso'},
+          {key: 'tentativa', label: 'Tentativa'},
+          {key: 'melhor_acerto', label: 'Melhor'},
+          {key: 'jogo_1', label: 'Jogo 1'},
+          {key: 'acertos_jogo_1', label: 'Acertos J1'},
+          {key: 'jogo_2', label: 'Jogo 2'},
+          {key: 'acertos_jogo_2', label: 'Acertos J2'}
+        ]) + '</section>' +
+        '<section class="comparison"><h2>Concursos resolvidos com 15</h2>' + tableRows(winners, [
+          {key: 'target_concurso', label: 'Concurso'},
+          {key: 'tentativa', label: 'Tentativa'},
+          {key: 'melhor_jogo', label: 'Jogo vencedor'},
+          {key: 'solved_at', label: 'Resolvido em'}
+        ]) + '</section>' +
+      '</section>';
+    }
     async function request(path, options) {
       const output = document.getElementById('output');
       output.textContent = 'Processando...';
@@ -231,6 +299,10 @@ def _html_page() -> str:
       return data;
     }
     async function status() { await request('/api/status'); }
+    async function calibrationStatus() {
+      const data = await request('/api/calibration/status');
+      document.getElementById('games').innerHTML = renderCalibration(data);
+    }
     async function updateBase() { await request('/api/update', {method: 'POST'}); }
     async function transitions() { await request('/api/transitions', {method: 'POST'}); }
     async function climate() { await request('/api/climate', {method: 'POST'}); }
@@ -333,6 +405,17 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 return
             if self.path == "/api/status":
                 self._handle_json(lambda: LotofacilPipeline(config=config, logger=logger).status().__dict__)
+                return
+            if self.path == "/api/calibration/status":
+                self._handle_json(
+                    lambda: load_calibration_lab_status(
+                        state_json_path=config.calibration_lab_state_json_path,
+                        attempts_csv_path=config.calibration_lab_attempts_csv_path,
+                        winners_csv_path=config.calibration_lab_winners_csv_path,
+                        average_weights_csv_path=config.calibration_lab_average_weights_csv_path,
+                        engine_weights_json_path=config.engine_calibration_weights_json_path,
+                    )
+                )
                 return
             if self.path == "/report":
                 report_path = config.prediction_report_path

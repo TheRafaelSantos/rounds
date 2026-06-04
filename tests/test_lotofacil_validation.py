@@ -10,6 +10,7 @@ import pandas as pd
 
 from lotofacil_analytics.auditoria import build_auditoria
 from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
+from lotofacil_analytics.calibration_lab import load_calibration_lab_status, run_calibration_lab
 from lotofacil_analytics.calibration_pilot import run_calibration_pilot
 from lotofacil_analytics.climate_pipeline import ClimatePipeline
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
@@ -514,6 +515,57 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertTrue(paths["state_json_path"].exists())
             self.assertTrue(paths["excel_path"].exists())
 
+    def test_calibration_lab_writes_resumable_status(self) -> None:
+        rows = []
+        for idx in range(1, 18):
+            rows.append(normalize_contest(payload_with_dezenas(idx, cyclic_dezenas(idx))))
+        concursos = pd.DataFrame(rows)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            paths = {
+                "state_json_path": base / "lab_state.json",
+                "attempts_csv_path": base / "lab_attempts.csv",
+                "winners_csv_path": base / "lab_winners.csv",
+                "summary_csv_path": base / "lab_summary.csv",
+                "average_weights_csv_path": base / "lab_average_weights.csv",
+                "excel_path": base / "lab.xlsx",
+                "engine_weights_json_path": base / "engine_weights.json",
+            }
+            summary = run_calibration_lab(
+                concursos,
+                climate_features=pd.DataFrame(),
+                from_concurso=14,
+                to_concurso=14,
+                max_attempts=2,
+                top_games=12,
+                exhaustive_limit=220,
+                max_overlap=14,
+                seed=123,
+                draw_hour=20,
+                draw_minute=0,
+                min_history=10,
+                max_runtime_seconds=0,
+                reset=True,
+                **paths,
+            )
+            status = load_calibration_lab_status(
+                state_json_path=paths["state_json_path"],
+                attempts_csv_path=paths["attempts_csv_path"],
+                winners_csv_path=paths["winners_csv_path"],
+                average_weights_csv_path=paths["average_weights_csv_path"],
+                engine_weights_json_path=paths["engine_weights_json_path"],
+            )
+
+            attempts = pd.read_csv(paths["attempts_csv_path"])
+            self.assertEqual(summary.attempts_this_run, 2)
+            self.assertEqual(len(attempts), 2)
+            self.assertIn("status", status["state"])
+            self.assertEqual(len(status["recent_attempts"]), 2)
+            self.assertTrue(paths["state_json_path"].exists())
+            self.assertTrue(paths["summary_csv_path"].exists())
+            self.assertTrue(paths["average_weights_csv_path"].exists())
+
     def test_transition_outputs_compare_consecutive_draws(self) -> None:
         rows = []
         for idx in range(1, 6):
@@ -747,6 +799,7 @@ class LotofacilValidationTest(unittest.TestCase):
         html = _html_page()
         self.assertIn("Lotofacil Analytics", html)
         self.assertIn("/api/status", html)
+        self.assertIn("/api/calibration/status", html)
         self.assertIn("/api/transitions", html)
         self.assertIn("/api/climate", html)
         self.assertIn("/api/predict", html)
@@ -760,6 +813,7 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("score_portfolio_jogo_2", html)
         self.assertIn("Decisão protegida", html)
         self.assertIn("Anti-falso-negativo", html)
+        self.assertIn("Calibração 24/7", html)
 
     def test_generate_games_balanceado_returns_requested_quantity(self) -> None:
         rows = []

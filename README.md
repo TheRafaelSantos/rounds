@@ -23,6 +23,7 @@ Fases implementadas:
 13. **Camada climatica experimental - temperatura, sensacao termica, umidade, pressao, chuva, anomalia e faixas climaticas**.
 14. **Temporal profundo - dia da semana, ultimos 15/30 dias, bimestre, trimestre e semestre**.
 15. **Calibracao do motor - pesos walk-forward de 2500 ate o ultimo concurso local**.
+16. **Calibracao 24/7 retomavel - busca pesos ate acertar 15 dezenas em um dos dois jogos historicos e aplica a media vencedora ao motor principal**.
 
 Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos, backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio, motor exaustivo `ensemble_score_v4_exaustivo_transicao`, camada climatica e camada de decisao acima do motor atual.
 
@@ -165,6 +166,30 @@ Arquivos gerados para o concurso 2500:
 3. `data/processed/lotofacil_calibration_pilot_summary_2500.csv`;
 4. `data/processed/lotofacil_calibration_pilot_state_2500.json`;
 5. `data/exports/lotofacil_calibration_pilot_2500.xlsx`.
+
+Rodar calibracao 24/7 do motor principal:
+
+```powershell
+python main.py --calibration-lab --lab-from-concurso 2500 --lab-top-games 5000 --draw-hour 20 --draw-minute 0
+```
+
+Esse comando roda em loop. Para cada concurso historico a partir do 2500, ele usa apenas os concursos anteriores como treino, gera 2 jogos com pesos diferentes, confere o resultado real somente depois da geracao e so avanca para o proximo concurso quando um dos dois jogos acertar as 15 dezenas. Se o processo for interrompido, rode o mesmo comando novamente e ele continua do estado salvo.
+
+Para testar uma execucao curta no Windows:
+
+```powershell
+python main.py --calibration-lab --lab-from-concurso 2500 --lab-max-attempts 1 --lab-exhaustive-limit 5000 --lab-top-games 200 --draw-hour 20 --draw-minute 0
+```
+
+Arquivos principais:
+
+1. `data/processed/lotofacil_calibration_lab_state.json`;
+2. `data/processed/lotofacil_calibration_lab_attempts.csv`;
+3. `data/processed/lotofacil_calibration_lab_winners.csv`;
+4. `data/processed/lotofacil_calibration_lab_average_weights.csv`;
+5. `data/processed/lotofacil_engine_calibrated_weights.json`.
+
+Quando algum concurso e resolvido com 15 pontos, a media dos pesos vencedores e salva em `lotofacil_engine_calibrated_weights.json`. Esse arquivo e carregado automaticamente pelo motor principal de 2 jogos (`--predict` e `--optimize` com motor exaustivo).
 
 Gerar combinacoes e assinaturas:
 
@@ -309,6 +334,39 @@ Abrir interface web local:
 ```powershell
 python main.py --serve
 ```
+
+Rodar com Docker no Windows:
+
+```powershell
+cd C:\Users\rafap\Desktop\LotoFacil
+docker compose up -d --build
+```
+
+Abrir a interface Docker:
+
+```text
+http://127.0.0.1:8765
+```
+
+Ver containers:
+
+```powershell
+docker compose ps
+```
+
+Ver logs do calibrador:
+
+```powershell
+docker compose logs -f --tail=120 lotofacil-calibrator
+```
+
+Parar sem apagar dados:
+
+```powershell
+docker compose down
+```
+
+Na VPS/Linux, rode os mesmos comandos dentro de `/opt/lotofacil`. O guia de operacao fica em `docs/DEPLOY_VPS.md`.
 
 Gerar executavel Windows, se PyInstaller estiver instalado:
 
