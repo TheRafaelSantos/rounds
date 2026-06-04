@@ -10,6 +10,7 @@ import pandas as pd
 
 from lotofacil_analytics.auditoria import build_auditoria
 from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
+from lotofacil_analytics.calibration_pilot import run_calibration_pilot
 from lotofacil_analytics.climate_pipeline import ClimatePipeline
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
 from lotofacil_analytics.config import AppConfig
@@ -459,6 +460,59 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertTrue(weights_path.exists())
             self.assertIn("weights", payload)
             self.assertAlmostEqual(sum(payload["weights"].values()), 1.0, places=6)
+
+    def test_calibration_pilot_resumes_from_saved_attempts(self) -> None:
+        rows = []
+        for idx in range(1, 18):
+            rows.append(normalize_contest(payload_with_dezenas(idx, cyclic_dezenas(idx))))
+        concursos = pd.DataFrame(rows)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            paths = {
+                "candidates_csv_path": base / "pilot_candidates.csv",
+                "results_csv_path": base / "pilot_results.csv",
+                "summary_csv_path": base / "pilot_summary.csv",
+                "state_json_path": base / "pilot_state.json",
+                "excel_path": base / "pilot.xlsx",
+            }
+            first = run_calibration_pilot(
+                concursos,
+                climate_features=pd.DataFrame(),
+                target_concurso=14,
+                attempts=2,
+                candidate_pool=12,
+                exhaustive_limit=200,
+                max_overlap=14,
+                seed=123,
+                draw_hour=20,
+                draw_minute=0,
+                reset=True,
+                **paths,
+            )
+            second = run_calibration_pilot(
+                concursos,
+                climate_features=pd.DataFrame(),
+                target_concurso=14,
+                attempts=4,
+                candidate_pool=12,
+                exhaustive_limit=200,
+                max_overlap=14,
+                seed=123,
+                draw_hour=20,
+                draw_minute=0,
+                reset=False,
+                **paths,
+            )
+
+            results = pd.read_csv(paths["results_csv_path"])
+            self.assertEqual(first.completed_attempts, 2)
+            self.assertEqual(first.attempts_this_run, 2)
+            self.assertEqual(second.completed_attempts, 4)
+            self.assertEqual(second.attempts_this_run, 2)
+            self.assertEqual(results["tentativa"].astype(int).tolist(), [1, 2, 3, 4])
+            self.assertTrue(paths["state_json_path"].exists())
+            self.assertTrue(paths["excel_path"].exists())
 
     def test_transition_outputs_compare_consecutive_draws(self) -> None:
         rows = []

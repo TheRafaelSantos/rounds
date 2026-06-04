@@ -14,6 +14,7 @@ from lotofacil_analytics.config import AppConfig
 from lotofacil_analytics.auditoria_pipeline import AuditoriaPipeline
 from lotofacil_analytics.build_executable import build_executable
 from lotofacil_analytics.backtest_pipeline import BacktestPipeline
+from lotofacil_analytics.calibration_pilot_pipeline import CalibrationPilotPipeline
 from lotofacil_analytics.climate_pipeline import ClimatePipeline
 from lotofacil_analytics.combinacoes_pipeline import CombinacoesPipeline
 from lotofacil_analytics.dezenas_pipeline import DezenasPipeline
@@ -74,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--ablation-test", action="store_true", help="Mede impacto de remover familias de score do motor exaustivo.")
     mode.add_argument("--tune-weights", action="store_true", help="Testa perfis de pesos e salva o melhor perfil observado.")
     mode.add_argument("--calibrate-engine", action="store_true", help="Calibra pesos do motor por walk-forward contra concursos passados.")
+    mode.add_argument("--calibration-pilot", action="store_true", help="Roda piloto retomavel de busca de pesos por resultado final.")
     mode.add_argument("--analyze-result", action="store_true", help="Analisa resultado real contra os jogos previstos.")
     mode.add_argument("--final-backtest", action="store_true", help="Executa backtest do score final completo contra aleatorio.")
     mode.add_argument("--export", action="store_true", help="Gera Excel consolidado com as abas do briefing.")
@@ -120,6 +122,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--calibration-from-concurso", type=int, default=2500, help="Concurso inicial do --calibrate-engine.")
     parser.add_argument("--calibration-to-concurso", type=int, default=None, help="Concurso final do --calibrate-engine; omitido usa ultimo local.")
     parser.add_argument("--calibration-baseline-samples", type=int, default=30, help="Combos aleatorios por concurso na calibracao.")
+    parser.add_argument("--pilot-concurso", type=int, default=2500, help="Concurso-alvo do --calibration-pilot.")
+    parser.add_argument("--pilot-games", type=int, default=100, help="Quantidade de tentativas de pesos/jogos no --calibration-pilot.")
+    parser.add_argument("--pilot-candidate-pool", type=int, default=5000, help="Quantidade de candidatos base reaproveitados no piloto.")
+    parser.add_argument("--pilot-exhaustive-limit", type=int, default=0, help="Limite de combinacoes na base do piloto; 0 avalia todas.")
+    parser.add_argument("--pilot-reset", action="store_true", help="Apaga memoria anterior do concurso no --calibration-pilot.")
     parser.add_argument("--actual-numbers", default=None, help="15 dezenas sorteadas para --analyze-result.")
     parser.add_argument("--result-label", default="resultado", help="Rotulo do resultado analisado.")
     parser.add_argument("--result-concurso", type=int, default=None, help="Numero do concurso analisado em --analyze-result.")
@@ -166,6 +173,7 @@ def main() -> int:
         or args.ablation_test
         or args.tune_weights
         or args.calibrate_engine
+        or args.calibration_pilot
         or args.analyze_result
         or args.final_backtest
         or args.export
@@ -301,6 +309,18 @@ def main() -> int:
                 seed=args.seed,
                 draw_hour=args.draw_hour,
                 draw_minute=args.draw_minute,
+            )
+        elif args.calibration_pilot:
+            summary = CalibrationPilotPipeline(config=config, logger=logger).run(
+                target_concurso=args.pilot_concurso,
+                attempts=args.pilot_games,
+                candidate_pool=args.pilot_candidate_pool,
+                exhaustive_limit=args.pilot_exhaustive_limit if int(args.pilot_exhaustive_limit) > 0 else None,
+                max_overlap=args.max_overlap_final,
+                seed=args.seed,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+                reset=args.pilot_reset,
             )
         elif args.predict:
             if args.mode == "completo":

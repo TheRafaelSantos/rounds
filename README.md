@@ -144,6 +144,28 @@ Arquivos gerados:
 
 Quando `lotofacil_engine_calibrated_weights.json` existe, o motor exaustivo carrega esses pesos automaticamente no `--optimize` e no `--predict` quando precisa reconstruir candidatos.
 
+Rodar piloto retomavel de busca de pesos por resultado final:
+
+```powershell
+python main.py --calibration-pilot --pilot-concurso 2500 --pilot-games 100 --pilot-candidate-pool 5000 --draw-hour 20 --draw-minute 0
+```
+
+Esse piloto nao altera os pesos oficiais do motor principal. Ele cria uma base de candidatos para o concurso-alvo, testa combinacoes de pesos, gera 2 jogos por tentativa e compara somente a quantidade de acertos. Se o computador desligar, rode o mesmo comando novamente e ele continua das tentativas ja salvas.
+
+Para reiniciar do zero o piloto de um concurso:
+
+```powershell
+python main.py --calibration-pilot --pilot-concurso 2500 --pilot-games 100 --pilot-reset --draw-hour 20 --draw-minute 0
+```
+
+Arquivos gerados para o concurso 2500:
+
+1. `data/processed/lotofacil_calibration_pilot_candidates_2500.csv`;
+2. `data/processed/lotofacil_calibration_pilot_results_2500.csv`;
+3. `data/processed/lotofacil_calibration_pilot_summary_2500.csv`;
+4. `data/processed/lotofacil_calibration_pilot_state_2500.json`;
+5. `data/exports/lotofacil_calibration_pilot_2500.xlsx`.
+
 Gerar combinacoes e assinaturas:
 
 ```powershell
