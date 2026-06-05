@@ -672,6 +672,77 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertEqual(str(migrated.loc[1, "cache_status"]), "hit")
             self.assertEqual(str(migrated.loc[1, "score_weights"]), "estatistico=1.0000")
 
+    def test_calibration_lab_append_preserves_existing_column_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "attempts.csv"
+            first = {
+                "target_concurso": 2500,
+                "score_weights": "estatistico=1.0000",
+                "peso_estatistico": 1.0,
+                "weight_strategy": "preset",
+            }
+            second = {
+                "target_concurso": 2500,
+                "weight_strategy": "elite_mutation",
+                "score_weights": "estatistico=0.5000",
+                "peso_estatistico": 0.5,
+            }
+
+            _append_csv(path, first)
+            _append_csv(path, second)
+            rows = path.read_text(encoding="utf-8-sig").splitlines()
+
+            self.assertEqual(rows[0].split(","), ["target_concurso", "score_weights", "peso_estatistico", "weight_strategy"])
+            self.assertEqual(rows[2].split(","), ["2500", "estatistico=0.5000", "0.5", "elite_mutation"])
+
+    def test_calibration_lab_read_csv_repairs_misaligned_weight_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "attempts.csv"
+            header = [
+                "score_weights",
+                "peso_estatistico",
+                "peso_historico",
+                "peso_atraso",
+                "peso_combinatorio",
+                "peso_localidade_numerologia",
+                "peso_climatico",
+                "peso_temporal_profundo",
+                "peso_cenarios",
+                "peso_contrarian",
+                "peso_transicao",
+                "peso_nao_repeticao_exata",
+                "weight_strategy",
+                "elite_source_attempts",
+                "elite_source_hits",
+            ]
+            misaligned = [
+                "elite_crossover",
+                "101|202",
+                "12|11",
+                "estatistico=0.1;historico=0.2",
+                "0.1",
+                "0.2",
+                "0.3",
+                "0.4",
+                "0.5",
+                "0.6",
+                "0.7",
+                "0.8",
+                "0.9",
+                "0.10",
+                "0.11",
+            ]
+            path.write_text(",".join(header) + "\n" + ",".join(misaligned) + "\n", encoding="utf-8")
+
+            repaired = _read_csv(path)
+
+            self.assertEqual(str(repaired.loc[0, "weight_strategy"]), "elite_crossover")
+            self.assertEqual(str(repaired.loc[0, "elite_source_attempts"]), "101|202")
+            self.assertEqual(str(repaired.loc[0, "elite_source_hits"]), "12|11")
+            self.assertEqual(str(repaired.loc[0, "score_weights"]), "estatistico=0.1;historico=0.2")
+            self.assertEqual(float(repaired.loc[0, "peso_estatistico"]), 0.1)
+            self.assertEqual(float(repaired.loc[0, "peso_nao_repeticao_exata"]), 0.11)
+
     def test_calibration_lab_read_csv_tolerates_empty_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "empty.csv"

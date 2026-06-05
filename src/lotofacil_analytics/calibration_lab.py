@@ -54,6 +54,15 @@ CACHE_SCHEMA_VERSION = 1
 CACHE_SCORE_COMPONENTS = tuple(component for component in WEIGHT_COMPONENTS if component != "nao_repeticao_exata")
 ATTEMPT_CACHE_COLUMNS = ["cache_status", "cache_rows", "cache_path"]
 ELITE_MIN_HITS = 11
+WEIGHT_STRATEGIES = {
+    "preset",
+    "random_exploration",
+    "winner_average_mutation",
+    "best_current_mutation",
+    "elite_mutation",
+    "elite_crossover",
+    "elite_centroid",
+}
 
 
 @dataclass(frozen=True)
@@ -130,11 +139,12 @@ def _read_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     try:
-        return pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
+        df = pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
     except pd.errors.EmptyDataError:
         return pd.DataFrame()
     except pd.errors.ParserError:
-        return _read_csv_flexible(path)
+        df = _read_csv_flexible(path)
+    return _repair_misaligned_attempt_columns(df)
 
 
 def _append_csv(path: Path, row: Mapping[str, object]) -> None:
@@ -161,13 +171,63 @@ def _append_csv(path: Path, row: Mapping[str, object]) -> None:
         merged.to_csv(path, index=False, encoding="utf-8-sig")
         return
 
-    new_row.to_csv(
+    new_row.reindex(columns=existing_cols).to_csv(
         path,
         mode="a",
         header=False,
         index=False,
         encoding="utf-8-sig",
     )
+
+
+def _repair_misaligned_attempt_columns(df: pd.DataFrame) -> pd.DataFrame:
+    ordered = [
+        "score_weights",
+        "peso_estatistico",
+        "peso_historico",
+        "peso_atraso",
+        "peso_combinatorio",
+        "peso_localidade_numerologia",
+        "peso_climatico",
+        "peso_temporal_profundo",
+        "peso_cenarios",
+        "peso_contrarian",
+        "peso_transicao",
+        "peso_nao_repeticao_exata",
+        "weight_strategy",
+        "elite_source_attempts",
+        "elite_source_hits",
+    ]
+    if df.empty or any(column not in df.columns for column in ordered):
+        return df
+    marker = df["score_weights"].astype(str).isin(WEIGHT_STRATEGIES)
+    if not bool(marker.any()):
+        return df
+
+    fixed = df.copy()
+    for column in ordered:
+        fixed[column] = fixed[column].astype(object)
+    source = fixed.loc[marker, ordered].copy()
+    mapping = {
+        "weight_strategy": "score_weights",
+        "elite_source_attempts": "peso_estatistico",
+        "elite_source_hits": "peso_historico",
+        "score_weights": "peso_atraso",
+        "peso_estatistico": "peso_combinatorio",
+        "peso_historico": "peso_localidade_numerologia",
+        "peso_atraso": "peso_climatico",
+        "peso_combinatorio": "peso_temporal_profundo",
+        "peso_localidade_numerologia": "peso_cenarios",
+        "peso_climatico": "peso_contrarian",
+        "peso_temporal_profundo": "peso_transicao",
+        "peso_cenarios": "peso_nao_repeticao_exata",
+        "peso_contrarian": "weight_strategy",
+        "peso_transicao": "elite_source_attempts",
+        "peso_nao_repeticao_exata": "elite_source_hits",
+    }
+    for target, source_column in mapping.items():
+        fixed.loc[marker, target] = source[source_column].to_numpy()
+    return fixed
 
 
 def _read_csv_flexible(path: Path) -> pd.DataFrame:
