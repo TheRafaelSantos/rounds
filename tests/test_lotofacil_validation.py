@@ -13,6 +13,7 @@ from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
 from lotofacil_analytics.calibration_lab import (
     WEIGHT_COMPONENTS,
     _append_csv,
+    _apply_calibration_novelty,
     _read_csv,
     _sync_elites_from_attempts,
     _weights_for_attempt,
@@ -643,6 +644,34 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertTrue(str(meta.get("weight_strategy", "")).startswith("elite_"))
             self.assertEqual(str(meta.get("elite_source_hits", "")), "12")
             self.assertAlmostEqual(sum(selected_weights.values()), 1.0, places=6)
+
+    def test_calibration_lab_penalizes_repeated_games(self) -> None:
+        repeated = "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15"
+        fresh = "01 02 03 04 05 06 07 08 09 16 17 18 19 20 21"
+        alternate = "01 02 03 04 05 06 07 08 10 16 17 18 19 20 22"
+        attempts = pd.DataFrame(
+            [
+                {"target_concurso": 2500, "jogo_1": repeated, "jogo_2": alternate},
+                {"target_concurso": 2500, "jogo_1": repeated, "jogo_2": alternate},
+                {"target_concurso": 2500, "jogo_1": repeated, "jogo_2": alternate},
+            ]
+        )
+        candidates = pd.DataFrame(
+            [
+                {"nums": repeated, "score_final": 99.0, "score_transicao": 99.0, "score_contextual": 99.0},
+                {"nums": fresh, "score_final": 97.0, "score_transicao": 97.0, "score_contextual": 97.0},
+                {"nums": alternate, "score_final": 96.0, "score_transicao": 96.0, "score_contextual": 96.0},
+            ]
+        )
+
+        penalized = _apply_calibration_novelty(candidates, attempts=attempts, target_concurso=2500)
+        repeated_row = penalized.loc[penalized["nums"] == repeated].iloc[0]
+        fresh_row = penalized.loc[penalized["nums"] == fresh].iloc[0]
+        final_games = select_final_games(penalized, max_overlap=10)
+
+        self.assertGreater(int(repeated_row["calibration_repeat_count"]), 0)
+        self.assertLess(float(repeated_row["score_final"]), float(fresh_row["score_final"]))
+        self.assertNotEqual(final_games.loc[0, "nums"], repeated)
 
     def test_calibration_lab_attempt_csv_evolves_cache_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -278,6 +278,8 @@ def _html_page() -> str:
           statusCard('Elites 11+', state.elite_count_current || 0) +
           statusCard('Melhor elite', state.elite_best_hits_current || 0) +
           statusCard('Fonte elite', state.current_elite_source_hits || state.last_elite_source_hits || '-') +
+          statusCard('Repetição J1/J2', (state.last_repeat_count_jogo_1 ?? '-') + ' / ' + (state.last_repeat_count_jogo_2 ?? '-')) +
+          statusCard('Overlap recente', (state.last_recent_overlap_jogo_1 ?? '-') + ' / ' + (state.last_recent_overlap_jogo_2 ?? '-')) +
         '</div>' +
         '<div class="exclusives"><strong>Melhor jogo atual:</strong> ' + escapeHtml(state.best_game_current || '-') + '</div>' +
         '<section class="comparison"><h2>Média atual dos pesos vencedores</h2>' + weightRows(weights) + '</section>' +
@@ -295,8 +297,10 @@ def _html_page() -> str:
           {key: 'melhor_acerto', label: 'Melhor'},
           {key: 'jogo_1', label: 'Jogo 1'},
           {key: 'acertos_jogo_1', label: 'Acertos J1'},
+          {key: 'repeat_count_jogo_1', label: 'Rep J1'},
           {key: 'jogo_2', label: 'Jogo 2'},
-          {key: 'acertos_jogo_2', label: 'Acertos J2'}
+          {key: 'acertos_jogo_2', label: 'Acertos J2'},
+          {key: 'repeat_count_jogo_2', label: 'Rep J2'}
         ]) + '</section>' +
         '<section class="comparison"><h2>Concursos resolvidos com 15</h2>' + tableRows(winners, [
           {key: 'target_concurso', label: 'Concurso'},

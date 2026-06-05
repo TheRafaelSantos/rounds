@@ -4,6 +4,7 @@ import json
 import csv
 import random
 import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import combinations
@@ -120,6 +121,16 @@ def _format_nums(nums: Sequence[int]) -> str:
     return " ".join(f"{int(n):02d}" for n in sorted(nums))
 
 
+def _parse_mask(text: object) -> int | None:
+    try:
+        nums = _parse_nums(str(text))
+    except (TypeError, ValueError):
+        return None
+    if len(nums) != 15 or len(set(nums)) != 15:
+        return None
+    return _mask_from_selected(nums)
+
+
 def _load_json(path: Path) -> Dict[str, object]:
     if not path.exists():
         return {}
@@ -228,6 +239,100 @@ def _repair_misaligned_attempt_columns(df: pd.DataFrame) -> pd.DataFrame:
     for target, source_column in mapping.items():
         fixed.loc[marker, target] = source[source_column].to_numpy()
     return fixed
+
+
+def _game_counts_for_target(attempts: pd.DataFrame, target_concurso: int) -> Counter[int]:
+    counts: Counter[int] = Counter()
+    if attempts.empty or "target_concurso" not in attempts.columns:
+        return counts
+    df = attempts.copy()
+    df["target_concurso"] = pd.to_numeric(df["target_concurso"], errors="coerce")
+    df = df[df["target_concurso"] == int(target_concurso)].copy()
+    if df.empty:
+        return counts
+    for column in ("jogo_1", "jogo_2"):
+        if column not in df.columns:
+            continue
+        for value in df[column].dropna().tolist():
+            mask = _parse_mask(value)
+            if mask is not None:
+                counts[int(mask)] += 1
+    return counts
+
+
+def _recent_game_masks_for_target(attempts: pd.DataFrame, target_concurso: int, *, recent_rows: int = 250) -> List[int]:
+    if attempts.empty or "target_concurso" not in attempts.columns:
+        return []
+    df = attempts.copy()
+    df["target_concurso"] = pd.to_numeric(df["target_concurso"], errors="coerce")
+    df = df[df["target_concurso"] == int(target_concurso)].tail(int(recent_rows)).copy()
+    masks: List[int] = []
+    for column in ("jogo_1", "jogo_2"):
+        if column not in df.columns:
+            continue
+        for value in df[column].dropna().tolist():
+            mask = _parse_mask(value)
+            if mask is not None:
+                masks.append(int(mask))
+    return masks
+
+
+def _max_overlap_with_masks(mask: int, previous_masks: Sequence[int]) -> int:
+    if not previous_masks:
+        return 0
+    return max(int(int(mask & previous).bit_count()) for previous in previous_masks)
+
+
+def _novelty_penalty(*, repeat_count: int, recent_max_overlap: int) -> float:
+    exact_penalty = min(24.0, float(max(0, repeat_count)) * 2.5)
+    overlap_penalty = 0.0
+    if int(recent_max_overlap) >= 15:
+        overlap_penalty = 6.0
+    elif int(recent_max_overlap) == 14:
+        overlap_penalty = 3.5
+    elif int(recent_max_overlap) == 13:
+        overlap_penalty = 1.5
+    elif int(recent_max_overlap) == 12:
+        overlap_penalty = 0.5
+    return round(float(exact_penalty + overlap_penalty), 6)
+
+
+def _apply_calibration_novelty(
+    candidates: pd.DataFrame,
+    *,
+    attempts: pd.DataFrame,
+    target_concurso: int,
+    recent_rows: int = 250,
+) -> pd.DataFrame:
+    if candidates.empty or "nums" not in candidates.columns or "score_final" not in candidates.columns:
+        return candidates.copy()
+    counts = _game_counts_for_target(attempts, target_concurso)
+    recent_masks = _recent_game_masks_for_target(attempts, target_concurso, recent_rows=recent_rows)
+    if not counts and not recent_masks:
+        out = candidates.copy()
+        out["score_final_original"] = pd.to_numeric(out["score_final"], errors="coerce")
+        out["calibration_repeat_count"] = 0
+        out["calibration_recent_max_overlap"] = 0
+        out["calibration_novelty_penalty"] = 0.0
+        out["score_calibration_novelty"] = 100.0
+        return out
+
+    rows: List[Dict[str, object]] = []
+    for _, row in candidates.iterrows():
+        out = row.to_dict()
+        mask = _parse_mask(out.get("nums", ""))
+        original_score = float(pd.to_numeric(pd.Series([out.get("score_final", 0.0)]), errors="coerce").fillna(0.0).iloc[0])
+        repeat_count = int(counts.get(int(mask), 0)) if mask is not None else 0
+        recent_overlap = _max_overlap_with_masks(int(mask), recent_masks) if mask is not None else 0
+        penalty = _novelty_penalty(repeat_count=repeat_count, recent_max_overlap=recent_overlap)
+        out["score_final_original"] = round(original_score, 6)
+        out["calibration_repeat_count"] = repeat_count
+        out["calibration_recent_max_overlap"] = int(recent_overlap)
+        out["calibration_novelty_penalty"] = penalty
+        out["score_calibration_novelty"] = round(max(0.0, 100.0 - (penalty * 3.0)), 6)
+        out["score_final"] = round(max(0.0, original_score - penalty), 6)
+        rows.append(out)
+    return sanitize_dataframe_for_tabular_output(pd.DataFrame(rows))
 
 
 def _read_csv_flexible(path: Path) -> pd.DataFrame:
@@ -362,6 +467,16 @@ def _elite_attempts_from(attempts: pd.DataFrame, *, min_hits: int = ELITE_MIN_HI
         "melhor_jogo",
         "score_jogo_1",
         "score_jogo_2",
+        "score_original_jogo_1",
+        "score_original_jogo_2",
+        "repeat_count_jogo_1",
+        "repeat_count_jogo_2",
+        "recent_overlap_jogo_1",
+        "recent_overlap_jogo_2",
+        "novelty_penalty_jogo_1",
+        "novelty_penalty_jogo_2",
+        "score_novelty_jogo_1",
+        "score_novelty_jogo_2",
         "weight_strategy",
         "elite_source_attempts",
         "elite_source_hits",
@@ -1091,6 +1206,7 @@ def _evaluate_attempt(
     train_df: pd.DataFrame,
     target_concurso: int,
     actual_nums: Sequence[int],
+    attempt_history: pd.DataFrame,
     climate_features: pd.DataFrame | None,
     weights: Mapping[str, float],
     top_games: int,
@@ -1118,6 +1234,11 @@ def _evaluate_attempt(
     if candidates.empty:
         raise ValueError("Motor exaustivo nao gerou candidatos para a tentativa.")
 
+    candidates = _apply_calibration_novelty(
+        candidates,
+        attempts=attempt_history,
+        target_concurso=target_concurso,
+    )
     final_games = select_final_games(candidates, max_overlap=max_overlap)
     game_1 = str(final_games.iloc[0]["nums"])
     game_2 = str(final_games.iloc[1]["nums"])
@@ -1135,6 +1256,16 @@ def _evaluate_attempt(
         "candidates_evaluated": int(candidates.iloc[0].get("total_combinacoes_avaliadas", 0)),
         "score_jogo_1": float(final_games.iloc[0].get("score_final", 0.0)),
         "score_jogo_2": float(final_games.iloc[1].get("score_final", 0.0)),
+        "score_original_jogo_1": float(final_games.iloc[0].get("score_final_original", final_games.iloc[0].get("score_final", 0.0))),
+        "score_original_jogo_2": float(final_games.iloc[1].get("score_final_original", final_games.iloc[1].get("score_final", 0.0))),
+        "repeat_count_jogo_1": int(final_games.iloc[0].get("calibration_repeat_count", 0)),
+        "repeat_count_jogo_2": int(final_games.iloc[1].get("calibration_repeat_count", 0)),
+        "recent_overlap_jogo_1": int(final_games.iloc[0].get("calibration_recent_max_overlap", 0)),
+        "recent_overlap_jogo_2": int(final_games.iloc[1].get("calibration_recent_max_overlap", 0)),
+        "novelty_penalty_jogo_1": float(final_games.iloc[0].get("calibration_novelty_penalty", 0.0)),
+        "novelty_penalty_jogo_2": float(final_games.iloc[1].get("calibration_novelty_penalty", 0.0)),
+        "score_novelty_jogo_1": float(final_games.iloc[0].get("score_calibration_novelty", 100.0)),
+        "score_novelty_jogo_2": float(final_games.iloc[1].get("score_calibration_novelty", 100.0)),
         "cache_status": str(cache_build["status"]),
         "cache_rows": int(cache_build["rows"]),
         "cache_path": str(cache_rank["cache_path"]),
@@ -1339,6 +1470,7 @@ def run_calibration_lab(
             train_df=train_df,
             target_concurso=target_concurso,
             actual_nums=actual_nums,
+            attempt_history=attempts,
             climate_features=climate_features,
             weights=weights,
             top_games=top_games,
@@ -1371,6 +1503,16 @@ def run_calibration_lab(
             "max_overlap": int(max_overlap),
             "score_jogo_1": float(evaluation["score_jogo_1"]),
             "score_jogo_2": float(evaluation["score_jogo_2"]),
+            "score_original_jogo_1": float(evaluation["score_original_jogo_1"]),
+            "score_original_jogo_2": float(evaluation["score_original_jogo_2"]),
+            "repeat_count_jogo_1": int(evaluation["repeat_count_jogo_1"]),
+            "repeat_count_jogo_2": int(evaluation["repeat_count_jogo_2"]),
+            "recent_overlap_jogo_1": int(evaluation["recent_overlap_jogo_1"]),
+            "recent_overlap_jogo_2": int(evaluation["recent_overlap_jogo_2"]),
+            "novelty_penalty_jogo_1": float(evaluation["novelty_penalty_jogo_1"]),
+            "novelty_penalty_jogo_2": float(evaluation["novelty_penalty_jogo_2"]),
+            "score_novelty_jogo_1": float(evaluation["score_novelty_jogo_1"]),
+            "score_novelty_jogo_2": float(evaluation["score_novelty_jogo_2"]),
             "cache_status": str(evaluation["cache_status"]),
             "cache_rows": int(evaluation["cache_rows"]),
             "cache_path": str(evaluation["cache_path"]),
@@ -1398,6 +1540,12 @@ def run_calibration_lab(
                 "last_cache_status": str(evaluation["cache_status"]),
                 "last_cache_rows": int(evaluation["cache_rows"]),
                 "last_cache_path": str(evaluation["cache_path"]),
+                "last_repeat_count_jogo_1": int(evaluation["repeat_count_jogo_1"]),
+                "last_repeat_count_jogo_2": int(evaluation["repeat_count_jogo_2"]),
+                "last_recent_overlap_jogo_1": int(evaluation["recent_overlap_jogo_1"]),
+                "last_recent_overlap_jogo_2": int(evaluation["recent_overlap_jogo_2"]),
+                "last_novelty_penalty_jogo_1": float(evaluation["novelty_penalty_jogo_1"]),
+                "last_novelty_penalty_jogo_2": float(evaluation["novelty_penalty_jogo_2"]),
                 "last_weight_strategy": str(weight_meta.get("weight_strategy", "")),
                 "last_elite_source_attempts": str(weight_meta.get("elite_source_attempts", "")),
                 "last_elite_source_hits": str(weight_meta.get("elite_source_hits", "")),

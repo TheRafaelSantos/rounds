@@ -13,6 +13,8 @@ A calibracao usa cache por concurso em `data/processed/lotofacil_calibration_lab
 
 Tentativas com 11, 12, 13 ou 14 acertos ficam salvas em `data/processed/lotofacil_calibration_lab_elites.csv`. O calibrador usa esses registros como memoria local para mutar, cruzar e refinar pesos que ja chegaram perto. Quando encontra 15 acertos em um dos dois jogos, salva em `lotofacil_calibration_lab_winners.csv`, recalcula a media vencedora e avanca para o proximo concurso.
 
+O calibrador tambem aplica penalizacao anti-repeticao: jogos ja testados muitas vezes, ou quase iguais aos jogos recentes, perdem score na tentativa atual. Isso reduz desperdicio quando a busca entra em plato repetindo a mesma combinacao.
+
 ## Comandos principais na VPS
 
 Entre na pasta do projeto:

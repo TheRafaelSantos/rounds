@@ -177,6 +177,8 @@ Esse comando roda em loop. Para cada concurso historico a partir do 2500, ele us
 
 Tentativas com 11, 12, 13 ou 14 acertos sao salvas como elites em `lotofacil_calibration_lab_elites.csv`. Essas elites viram memoria local do concurso atual: as proximas tentativas mutam, cruzam ou fazem a media dos pesos que chegaram perto, em vez de reiniciar a busca totalmente do zero. Tentativas com 15 acertos continuam sendo salvas como vencedoras, atualizam a media oficial de pesos e avancam para o proximo concurso historico.
 
+O laboratorio tambem aplica uma penalizacao anti-repeticao durante a selecao dos jogos finais de cada tentativa. Se uma combinacao ja apareceu muitas vezes, ou se e quase igual aos jogos recentes, ela perde prioridade para forcar exploracao de novas regioes do espaco de combinacoes.
+
 Para acelerar, a primeira tentativa de cada concurso monta um cache local dos scores de componentes. As tentativas seguintes reaproveitam esse cache e so recalculam a combinacao de pesos. O cache fica em `data/processed/lotofacil_calibration_lab_cache`.
 
 Para testar uma execucao curta no Windows:
