@@ -131,6 +131,8 @@ def _read_csv(path: Path) -> pd.DataFrame:
         return pd.DataFrame()
     try:
         return pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
     except pd.errors.ParserError:
         return _read_csv_flexible(path)
 

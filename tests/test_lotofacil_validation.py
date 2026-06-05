@@ -672,6 +672,15 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertEqual(str(migrated.loc[1, "cache_status"]), "hit")
             self.assertEqual(str(migrated.loc[1, "score_weights"]), "estatistico=1.0000")
 
+    def test_calibration_lab_read_csv_tolerates_empty_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.csv"
+            path.write_text("", encoding="utf-8")
+
+            df = _read_csv(path)
+
+            self.assertTrue(df.empty)
+
     def test_transition_outputs_compare_consecutive_draws(self) -> None:
         rows = []
         for idx in range(1, 6):
