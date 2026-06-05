@@ -53,6 +53,7 @@ WEIGHT_COMPONENTS = tuple(DEFAULT_EXHAUSTIVE_WEIGHTS.keys())
 CACHE_SCHEMA_VERSION = 1
 CACHE_SCORE_COMPONENTS = tuple(component for component in WEIGHT_COMPONENTS if component != "nao_repeticao_exata")
 ATTEMPT_CACHE_COLUMNS = ["cache_status", "cache_rows", "cache_path"]
+ELITE_MIN_HITS = 11
 
 
 @dataclass(frozen=True)
@@ -260,6 +261,198 @@ def _best_for_target(attempts: pd.DataFrame, target_concurso: int) -> Dict[str, 
     }
 
 
+def _weights_from_row(row: pd.Series | Mapping[str, object]) -> Dict[str, float]:
+    weights: Dict[str, float] = {}
+    for component in WEIGHT_COMPONENTS:
+        column = f"peso_{component}"
+        value = row.get(column) if isinstance(row, Mapping) else row.get(column)
+        if value is None or pd.isna(value):
+            continue
+        try:
+            weights[component] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return resolve_exhaustive_weights(weights) if weights else {}
+
+
+def _elite_attempts_from(attempts: pd.DataFrame, *, min_hits: int = ELITE_MIN_HITS) -> pd.DataFrame:
+    if attempts.empty or "melhor_acerto" not in attempts.columns:
+        return pd.DataFrame()
+    df = attempts.copy()
+    df["melhor_acerto"] = pd.to_numeric(df["melhor_acerto"], errors="coerce").fillna(0).astype(int)
+    df = df[df["melhor_acerto"] >= int(min_hits)].copy()
+    if df.empty:
+        return df
+    df["elite_level"] = df["melhor_acerto"].map(lambda value: f"elite_{int(value)}")
+    df["elite_saved_at"] = _now()
+    keep_columns = [
+        "target_concurso",
+        "data_sorteio",
+        "tentativa",
+        "generated_at",
+        "elite_saved_at",
+        "elite_level",
+        "melhor_acerto",
+        "jogo_1",
+        "acertos_jogo_1",
+        "jogo_2",
+        "acertos_jogo_2",
+        "melhor_jogo",
+        "score_jogo_1",
+        "score_jogo_2",
+        "weight_strategy",
+        "elite_source_attempts",
+        "elite_source_hits",
+        "score_weights",
+    ]
+    keep_columns.extend(f"peso_{component}" for component in WEIGHT_COMPONENTS)
+    for column in keep_columns:
+        if column not in df.columns:
+            df[column] = ""
+    return df[keep_columns].copy()
+
+
+def _sync_elites_from_attempts(
+    *,
+    attempts: pd.DataFrame,
+    elites_csv_path: Path,
+    min_hits: int = ELITE_MIN_HITS,
+) -> pd.DataFrame:
+    existing = _read_csv(elites_csv_path)
+    discovered = _elite_attempts_from(attempts, min_hits=min_hits)
+    if existing.empty and discovered.empty:
+        return pd.DataFrame()
+    merged = pd.concat([existing, discovered], ignore_index=True)
+    if merged.empty:
+        return merged
+    for column in ["target_concurso", "tentativa", "melhor_acerto"]:
+        if column in merged.columns:
+            merged[column] = pd.to_numeric(merged[column], errors="coerce")
+    merged = merged.dropna(subset=["target_concurso", "tentativa"]).copy()
+    if merged.empty:
+        return merged
+    merged["target_concurso"] = merged["target_concurso"].astype(int)
+    merged["tentativa"] = merged["tentativa"].astype(int)
+    merged["melhor_acerto"] = pd.to_numeric(merged["melhor_acerto"], errors="coerce").fillna(0).astype(int)
+    merged = merged.sort_values(
+        ["target_concurso", "melhor_acerto", "tentativa"],
+        ascending=[True, False, True],
+    ).drop_duplicates(["target_concurso", "tentativa"], keep="first")
+    merged = merged.sort_values(["target_concurso", "melhor_acerto", "tentativa"], ascending=[True, False, True])
+    elites_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_csv(elites_csv_path, index=False, encoding="utf-8-sig")
+    return merged.reset_index(drop=True)
+
+
+def _elite_rows_for_target(elites: pd.DataFrame, target_concurso: int) -> pd.DataFrame:
+    if elites.empty or "target_concurso" not in elites.columns:
+        return pd.DataFrame()
+    df = elites.copy()
+    df["target_concurso"] = pd.to_numeric(df["target_concurso"], errors="coerce")
+    df["melhor_acerto"] = pd.to_numeric(df.get("melhor_acerto", 0), errors="coerce").fillna(0).astype(int)
+    df = df[df["target_concurso"] == int(target_concurso)].copy()
+    if df.empty:
+        return df
+    return df.sort_values(["melhor_acerto", "tentativa"], ascending=[False, True]).reset_index(drop=True)
+
+
+def _elite_stats(elites: pd.DataFrame, target_concurso: int) -> Dict[str, object]:
+    target_elites = _elite_rows_for_target(elites, target_concurso)
+    if target_elites.empty:
+        return {
+            "elite_count_current": 0,
+            "elite_best_hits_current": 0,
+            "elite_best_attempt_current": 0,
+            "elite_counts_by_hits_current": {},
+        }
+    counts = {
+        str(int(hits)): int(count)
+        for hits, count in target_elites["melhor_acerto"].value_counts().sort_index().items()
+    }
+    best = target_elites.iloc[0]
+    return {
+        "elite_count_current": int(len(target_elites)),
+        "elite_best_hits_current": int(best["melhor_acerto"]),
+        "elite_best_attempt_current": int(best.get("tentativa", 0)),
+        "elite_counts_by_hits_current": counts,
+    }
+
+
+def _select_elite_row(elites: pd.DataFrame, rng: random.Random) -> pd.Series:
+    if elites.empty:
+        raise ValueError("Nenhuma elite disponivel para selecao.")
+    rows = elites.copy().reset_index(drop=True)
+    hits = pd.to_numeric(rows["melhor_acerto"], errors="coerce").fillna(0)
+    attempts = pd.to_numeric(rows.get("tentativa", 0), errors="coerce").fillna(0)
+    max_attempt = float(attempts.max()) if len(attempts) else 0.0
+    recency = 1.0 + ((attempts / max(1.0, max_attempt)) * 0.35)
+    score = ((hits - 10).clip(lower=1) ** 3) * recency
+    weights = [float(value) for value in score.tolist()]
+    index = rng.choices(list(range(len(rows))), weights=weights, k=1)[0]
+    return rows.iloc[int(index)]
+
+
+def _mutation_sigma(best_hits: int) -> float:
+    if int(best_hits) >= 14:
+        return 0.08
+    if int(best_hits) >= 13:
+        return 0.14
+    if int(best_hits) >= 12:
+        return 0.22
+    return 0.34
+
+
+def _mutate_weight_anchor(anchor: Mapping[str, float], *, rng: random.Random, best_hits: int, zero_probability: float | None = None) -> Dict[str, float]:
+    sigma = _mutation_sigma(best_hits)
+    zero_prob = zero_probability if zero_probability is not None else (0.005 if best_hits >= 13 else 0.02)
+    values: Dict[str, float] = {}
+    for component in WEIGHT_COMPONENTS:
+        base = max(0.0001, float(anchor.get(component, DEFAULT_EXHAUSTIVE_WEIGHTS[component])))
+        values[component] = base * rng.lognormvariate(0.0, sigma)
+        if rng.random() < zero_prob:
+            values[component] = 0.0
+    return resolve_exhaustive_weights(values)
+
+
+def _average_elite_weights(elites: pd.DataFrame, limit: int = 12) -> Dict[str, float]:
+    if elites.empty:
+        return {}
+    ranked = elites.sort_values(["melhor_acerto", "tentativa"], ascending=[False, True]).head(int(limit)).copy()
+    totals = {component: 0.0 for component in WEIGHT_COMPONENTS}
+    total_weight = 0.0
+    for _, row in ranked.iterrows():
+        weights = _weights_from_row(row)
+        if not weights:
+            continue
+        hit_weight = max(1.0, float(row.get("melhor_acerto", 0)) - 10.0) ** 2
+        total_weight += hit_weight
+        for component in WEIGHT_COMPONENTS:
+            totals[component] += float(weights.get(component, 0.0)) * hit_weight
+    if total_weight <= 0:
+        return {}
+    return resolve_exhaustive_weights({component: value / total_weight for component, value in totals.items()})
+
+
+def _crossover_elite_weights(elites: pd.DataFrame, rng: random.Random) -> Tuple[Dict[str, float], str, str]:
+    first = _select_elite_row(elites, rng)
+    second = _select_elite_row(elites, rng)
+    first_weights = _weights_from_row(first)
+    second_weights = _weights_from_row(second)
+    if not first_weights or not second_weights:
+        return {}, "", ""
+    alpha = rng.uniform(0.35, 0.65)
+    values = {
+        component: (alpha * float(first_weights.get(component, 0.0)))
+        + ((1.0 - alpha) * float(second_weights.get(component, 0.0)))
+        for component in WEIGHT_COMPONENTS
+    }
+    best_hits = max(int(first.get("melhor_acerto", 0)), int(second.get("melhor_acerto", 0)))
+    crossed = _mutate_weight_anchor(resolve_exhaustive_weights(values), rng=rng, best_hits=best_hits, zero_probability=0.0)
+    attempts = f"{int(first.get('tentativa', 0))}|{int(second.get('tentativa', 0))}"
+    hits = f"{int(first.get('melhor_acerto', 0))}|{int(second.get('melhor_acerto', 0))}"
+    return crossed, attempts, hits
+
+
 def _average_winner_weights(winners: pd.DataFrame) -> Dict[str, float] | None:
     if winners.empty:
         return None
@@ -326,6 +519,7 @@ def _write_summary(
     state: Mapping[str, object],
     attempts: pd.DataFrame,
     winners: pd.DataFrame,
+    elites: pd.DataFrame | None = None,
 ) -> None:
     rows = [
         {"metrica": "status", "valor": state.get("status", "")},
@@ -333,7 +527,9 @@ def _write_summary(
         {"metrica": "current_attempt", "valor": state.get("current_attempt", "")},
         {"metrica": "total_attempts", "valor": int(len(attempts))},
         {"metrica": "solved_contests", "valor": int(len(_solved_contests(winners)))},
+        {"metrica": "elites_total", "valor": int(0 if elites is None else len(elites))},
         {"metrica": "best_hits_current", "valor": state.get("best_hits_current", 0)},
+        {"metrica": "elite_best_hits_current", "valor": state.get("elite_best_hits_current", 0)},
         {"metrica": "best_game_current", "valor": state.get("best_game_current", "")},
         {"metrica": "updated_at", "valor": state.get("updated_at", "")},
     ]
@@ -346,6 +542,7 @@ def _write_excel_snapshot(
     excel_path: Path,
     attempts: pd.DataFrame,
     winners: pd.DataFrame,
+    elites: pd.DataFrame,
     average_weights_csv_path: Path,
     summary_csv_path: Path,
 ) -> None:
@@ -357,6 +554,7 @@ def _write_excel_snapshot(
         summary.to_excel(writer, index=False, sheet_name="resumo")
         average.to_excel(writer, index=False, sheet_name="pesos_medios")
         winners.to_excel(writer, index=False, sheet_name="vencedores")
+        elites.tail(1000).to_excel(writer, index=False, sheet_name="elites")
         attempts_tail.to_excel(writer, index=False, sheet_name="ultimas_tentativas")
 
 
@@ -751,17 +949,58 @@ def _weights_for_attempt(
     seed: int,
     average_winner_weights: Mapping[str, float] | None,
     best_current_weights: Mapping[str, float] | None,
-) -> Dict[str, float]:
+    elite_rows: pd.DataFrame | None = None,
+) -> Tuple[Dict[str, float], Dict[str, object]]:
     presets = _base_weight_presets()
-    if int(attempt) <= len(presets):
-        return resolve_exhaustive_weights(presets[int(attempt) - 1])
-
     rng = random.Random(int(seed) + int(target_concurso) * 1000003 + int(attempt) * 7919)
+    target_elites = elite_rows.copy() if elite_rows is not None and not elite_rows.empty else pd.DataFrame()
+    if not target_elites.empty:
+        roll = rng.random()
+        if roll < 0.60:
+            elite = _select_elite_row(target_elites, rng)
+            anchor = _weights_from_row(elite)
+            if anchor:
+                hits = int(elite.get("melhor_acerto", 0))
+                weights = _mutate_weight_anchor(anchor, rng=rng, best_hits=hits)
+                return weights, {
+                    "weight_strategy": "elite_mutation",
+                    "elite_source_attempts": str(int(elite.get("tentativa", 0))),
+                    "elite_source_hits": str(hits),
+                }
+        if roll < 0.82 and len(target_elites) >= 2:
+            crossed, attempts_label, hits_label = _crossover_elite_weights(target_elites, rng)
+            if crossed:
+                return crossed, {
+                    "weight_strategy": "elite_crossover",
+                    "elite_source_attempts": attempts_label,
+                    "elite_source_hits": hits_label,
+                }
+        if roll < 0.95:
+            anchor = _average_elite_weights(target_elites)
+            if anchor:
+                best_hits = int(pd.to_numeric(target_elites["melhor_acerto"], errors="coerce").max())
+                weights = _mutate_weight_anchor(anchor, rng=rng, best_hits=best_hits, zero_probability=0.0)
+                return weights, {
+                    "weight_strategy": "elite_centroid",
+                    "elite_source_attempts": "top_elites",
+                    "elite_source_hits": str(best_hits),
+                }
+
+    if int(attempt) <= len(presets):
+        return resolve_exhaustive_weights(presets[int(attempt) - 1]), {
+            "weight_strategy": "preset",
+            "elite_source_attempts": "",
+            "elite_source_hits": "",
+        }
+
     anchor: Mapping[str, float] | None = None
+    strategy = "random_exploration"
     if average_winner_weights and attempt % 3 == 0:
         anchor = average_winner_weights
+        strategy = "winner_average_mutation"
     elif best_current_weights and attempt % 5 == 0:
         anchor = best_current_weights
+        strategy = "best_current_mutation"
 
     values: Dict[str, float] = {}
     if anchor:
@@ -778,7 +1017,11 @@ def _weights_for_attempt(
                 values[component] = 0.0
             else:
                 values[component] = rng.gammavariate(0.7 + base * 14.0, 1.0)
-    return resolve_exhaustive_weights(values)
+    return resolve_exhaustive_weights(values), {
+        "weight_strategy": strategy,
+        "elite_source_attempts": "",
+        "elite_source_hits": "",
+    }
 
 
 def _evaluate_attempt(
@@ -841,6 +1084,7 @@ def load_calibration_lab_status(
     state_json_path: Path,
     attempts_csv_path: Path,
     winners_csv_path: Path,
+    elites_csv_path: Path,
     average_weights_csv_path: Path,
     engine_weights_json_path: Path,
     recent_rows: int = 12,
@@ -848,18 +1092,30 @@ def load_calibration_lab_status(
     state = _load_json(state_json_path)
     attempts = _read_csv(attempts_csv_path)
     winners = _read_csv(winners_csv_path)
+    elites = _read_csv(elites_csv_path)
     average = _read_csv(average_weights_csv_path)
     engine_payload = _load_json(engine_weights_json_path)
+    current_concurso = state.get("current_concurso")
+    display_elites = elites
+    if current_concurso not in (None, ""):
+        try:
+            display_elites = _elite_rows_for_target(elites, int(current_concurso)).head(int(recent_rows))
+        except (TypeError, ValueError):
+            display_elites = elites.tail(int(recent_rows))
+    else:
+        display_elites = elites.tail(int(recent_rows))
     return {
         "state": state,
         "recent_attempts": attempts.tail(int(recent_rows)).astype(object).where(pd.notna(attempts.tail(int(recent_rows))), None).to_dict(orient="records") if not attempts.empty else [],
         "winners": winners.tail(int(recent_rows)).astype(object).where(pd.notna(winners.tail(int(recent_rows))), None).to_dict(orient="records") if not winners.empty else [],
+        "elites": display_elites.astype(object).where(pd.notna(display_elites), None).to_dict(orient="records") if not display_elites.empty else [],
         "average_weights": average.astype(object).where(pd.notna(average), None).to_dict(orient="records") if not average.empty else [],
         "engine_weights": engine_payload.get("weights", {}) if isinstance(engine_payload, dict) else {},
         "paths": {
             "state_json_path": str(state_json_path),
             "attempts_csv_path": str(attempts_csv_path),
             "winners_csv_path": str(winners_csv_path),
+            "elites_csv_path": str(elites_csv_path),
             "average_weights_csv_path": str(average_weights_csv_path),
             "engine_weights_json_path": str(engine_weights_json_path),
         },
@@ -885,6 +1141,7 @@ def run_calibration_lab(
     state_json_path: Path,
     attempts_csv_path: Path,
     winners_csv_path: Path,
+    elites_csv_path: Path,
     summary_csv_path: Path,
     average_weights_csv_path: Path,
     excel_path: Path,
@@ -904,6 +1161,7 @@ def run_calibration_lab(
                 state_json_path,
                 attempts_csv_path,
                 winners_csv_path,
+                elites_csv_path,
                 summary_csv_path,
                 average_weights_csv_path,
                 excel_path,
@@ -940,6 +1198,7 @@ def run_calibration_lab(
     while True:
         attempts = _read_csv(attempts_csv_path)
         winners = _read_csv(winners_csv_path)
+        elites = _sync_elites_from_attempts(attempts=attempts, elites_csv_path=elites_csv_path)
         average_winner_weights = _write_average_outputs(
             winners=winners,
             average_weights_csv_path=average_weights_csv_path,
@@ -960,7 +1219,7 @@ def run_calibration_lab(
                 }
             )
             _write_json(state_json_path, state)
-            _write_summary(summary_csv_path=summary_csv_path, state=state, attempts=attempts, winners=winners)
+            _write_summary(summary_csv_path=summary_csv_path, state=state, attempts=attempts, winners=winners, elites=elites)
             break
 
         matches = df.index[df["concurso"].astype(int) == int(target_concurso)].tolist()
@@ -979,12 +1238,15 @@ def run_calibration_lab(
         actual_nums = _nums_from_row(target_row)
         next_attempt = _last_attempt_for_target(attempts, target_concurso) + 1
         best_current = _best_for_target(attempts, target_concurso)
-        weights = _weights_for_attempt(
+        target_elites = _elite_rows_for_target(elites, target_concurso)
+        elite_stats = _elite_stats(elites, target_concurso)
+        weights, weight_meta = _weights_for_attempt(
             target_concurso=target_concurso,
             attempt=next_attempt,
             seed=seed,
             average_winner_weights=average_winner_weights,
             best_current_weights=best_current.get("weights", {}),
+            elite_rows=target_elites,
         )
 
         state.update(
@@ -995,6 +1257,10 @@ def run_calibration_lab(
                 "best_hits_current": int(best_current.get("hits", 0)),
                 "best_game_current": str(best_current.get("game", "")),
                 "best_attempt_current": int(best_current.get("attempt", 0)),
+                **elite_stats,
+                "current_weight_strategy": str(weight_meta.get("weight_strategy", "")),
+                "current_elite_source_attempts": str(weight_meta.get("elite_source_attempts", "")),
+                "current_elite_source_hits": str(weight_meta.get("elite_source_hits", "")),
                 "solved_contests": sorted(solved),
                 "solved_count": int(len(solved)),
                 "average_weights": average_winner_weights or {},
@@ -1046,6 +1312,9 @@ def run_calibration_lab(
             "cache_status": str(evaluation["cache_status"]),
             "cache_rows": int(evaluation["cache_rows"]),
             "cache_path": str(evaluation["cache_path"]),
+            "weight_strategy": str(weight_meta.get("weight_strategy", "")),
+            "elite_source_attempts": str(weight_meta.get("elite_source_attempts", "")),
+            "elite_source_hits": str(weight_meta.get("elite_source_hits", "")),
             "score_weights": format_exhaustive_weights(weights),
         }
         for component, value in weights.items():
@@ -1053,6 +1322,8 @@ def run_calibration_lab(
         _append_csv(attempts_csv_path, row)
 
         attempts = _read_csv(attempts_csv_path)
+        elites = _sync_elites_from_attempts(attempts=attempts, elites_csv_path=elites_csv_path)
+        elite_stats = _elite_stats(elites, target_concurso)
         best_current = _best_for_target(attempts, target_concurso)
         state.update(
             {
@@ -1065,7 +1336,12 @@ def run_calibration_lab(
                 "last_cache_status": str(evaluation["cache_status"]),
                 "last_cache_rows": int(evaluation["cache_rows"]),
                 "last_cache_path": str(evaluation["cache_path"]),
+                "last_weight_strategy": str(weight_meta.get("weight_strategy", "")),
+                "last_elite_source_attempts": str(weight_meta.get("elite_source_attempts", "")),
+                "last_elite_source_hits": str(weight_meta.get("elite_source_hits", "")),
                 "current_cache_status": str(evaluation["cache_status"]),
+                "current_weight_strategy": str(weight_meta.get("weight_strategy", "")),
+                **elite_stats,
                 "best_hits_current": int(best_current.get("hits", 0)),
                 "best_game_current": str(best_current.get("game", "")),
                 "best_attempt_current": int(best_current.get("attempt", 0)),
@@ -1107,13 +1383,14 @@ def run_calibration_lab(
 
         winners = _read_csv(winners_csv_path)
         _write_json(state_json_path, state)
-        _write_summary(summary_csv_path=summary_csv_path, state=state, attempts=attempts, winners=winners)
+        _write_summary(summary_csv_path=summary_csv_path, state=state, attempts=attempts, winners=winners, elites=elites)
 
         if attempts_this_run % 20 == 0 or int(evaluation["melhor_acerto"]) >= 15:
             _write_excel_snapshot(
                 excel_path=excel_path,
                 attempts=attempts,
                 winners=winners,
+                elites=elites,
                 average_weights_csv_path=average_weights_csv_path,
                 summary_csv_path=summary_csv_path,
             )
@@ -1133,17 +1410,19 @@ def run_calibration_lab(
 
     attempts = _read_csv(attempts_csv_path)
     winners = _read_csv(winners_csv_path)
+    elites = _sync_elites_from_attempts(attempts=attempts, elites_csv_path=elites_csv_path)
     best_current = _best_for_target(attempts, int(state["current_concurso"])) if state.get("current_concurso") else {"hits": 0, "game": ""}
     _write_average_outputs(
         winners=winners,
         average_weights_csv_path=average_weights_csv_path,
         engine_weights_json_path=engine_weights_json_path,
     )
-    _write_summary(summary_csv_path=summary_csv_path, state=state, attempts=attempts, winners=winners)
+    _write_summary(summary_csv_path=summary_csv_path, state=state, attempts=attempts, winners=winners, elites=elites)
     _write_excel_snapshot(
         excel_path=excel_path,
         attempts=attempts,
         winners=winners,
+        elites=elites,
         average_weights_csv_path=average_weights_csv_path,
         summary_csv_path=summary_csv_path,
     )

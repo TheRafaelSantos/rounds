@@ -11,6 +11,8 @@ Os arquivos de progresso ficam no volume `./data`, fora da imagem Docker. Se o c
 
 A calibracao usa cache por concurso em `data/processed/lotofacil_calibration_lab_cache`. A primeira tentativa de um concurso cria a matriz de scores; as tentativas seguintes reaproveitam essa matriz e apenas recalculam pesos.
 
+Tentativas com 11, 12, 13 ou 14 acertos ficam salvas em `data/processed/lotofacil_calibration_lab_elites.csv`. O calibrador usa esses registros como memoria local para mutar, cruzar e refinar pesos que ja chegaram perto. Quando encontra 15 acertos em um dos dois jogos, salva em `lotofacil_calibration_lab_winners.csv`, recalcula a media vencedora e avanca para o proximo concurso.
+
 ## Comandos principais na VPS
 
 Entre na pasta do projeto:
@@ -67,6 +69,7 @@ docker compose restart lotofacil-calibrator
 /opt/lotofacil/data/processed/lotofacil_calibration_lab_state.json
 /opt/lotofacil/data/processed/lotofacil_calibration_lab_attempts.csv
 /opt/lotofacil/data/processed/lotofacil_calibration_lab_winners.csv
+/opt/lotofacil/data/processed/lotofacil_calibration_lab_elites.csv
 /opt/lotofacil/data/processed/lotofacil_calibration_lab_average_weights.csv
 /opt/lotofacil/data/processed/lotofacil_engine_calibrated_weights.json
 /opt/lotofacil/data/processed/lotofacil_calibration_lab_cache/

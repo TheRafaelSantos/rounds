@@ -23,7 +23,7 @@ Fases implementadas:
 13. **Camada climatica experimental - temperatura, sensacao termica, umidade, pressao, chuva, anomalia e faixas climaticas**.
 14. **Temporal profundo - dia da semana, ultimos 15/30 dias, bimestre, trimestre e semestre**.
 15. **Calibracao do motor - pesos walk-forward de 2500 ate o ultimo concurso local**.
-16. **Calibracao 24/7 retomavel - busca pesos ate acertar 15 dezenas em um dos dois jogos historicos e aplica a media vencedora ao motor principal**.
+16. **Calibracao 24/7 retomavel - busca pesos ate acertar 15 dezenas em um dos dois jogos historicos, guarda elites de 11/12/13/14 acertos e aplica a media vencedora ao motor principal**.
 
 Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos, backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio, motor exaustivo `ensemble_score_v4_exaustivo_transicao`, camada climatica e camada de decisao acima do motor atual.
 
@@ -175,6 +175,8 @@ python main.py --calibration-lab --lab-from-concurso 2500 --lab-top-games 5000 -
 
 Esse comando roda em loop. Para cada concurso historico a partir do 2500, ele usa apenas os concursos anteriores como treino, gera 2 jogos com pesos diferentes, confere o resultado real somente depois da geracao e so avanca para o proximo concurso quando um dos dois jogos acertar as 15 dezenas. Se o processo for interrompido, rode o mesmo comando novamente e ele continua do estado salvo.
 
+Tentativas com 11, 12, 13 ou 14 acertos sao salvas como elites em `lotofacil_calibration_lab_elites.csv`. Essas elites viram memoria local do concurso atual: as proximas tentativas mutam, cruzam ou fazem a media dos pesos que chegaram perto, em vez de reiniciar a busca totalmente do zero. Tentativas com 15 acertos continuam sendo salvas como vencedoras, atualizam a media oficial de pesos e avancam para o proximo concurso historico.
+
 Para acelerar, a primeira tentativa de cada concurso monta um cache local dos scores de componentes. As tentativas seguintes reaproveitam esse cache e so recalculam a combinacao de pesos. O cache fica em `data/processed/lotofacil_calibration_lab_cache`.
 
 Para testar uma execucao curta no Windows:
@@ -188,9 +190,10 @@ Arquivos principais:
 1. `data/processed/lotofacil_calibration_lab_state.json`;
 2. `data/processed/lotofacil_calibration_lab_attempts.csv`;
 3. `data/processed/lotofacil_calibration_lab_winners.csv`;
-4. `data/processed/lotofacil_calibration_lab_average_weights.csv`;
-5. `data/processed/lotofacil_engine_calibrated_weights.json`;
-6. `data/processed/lotofacil_calibration_lab_cache/`.
+4. `data/processed/lotofacil_calibration_lab_elites.csv`;
+5. `data/processed/lotofacil_calibration_lab_average_weights.csv`;
+6. `data/processed/lotofacil_engine_calibrated_weights.json`;
+7. `data/processed/lotofacil_calibration_lab_cache/`.
 
 Quando algum concurso e resolvido com 15 pontos, a media dos pesos vencedores e salva em `lotofacil_engine_calibrated_weights.json`. Esse arquivo e carregado automaticamente pelo motor principal de 2 jogos (`--predict` e `--optimize` com motor exaustivo).
 

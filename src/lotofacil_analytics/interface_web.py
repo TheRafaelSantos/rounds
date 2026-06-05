@@ -260,6 +260,7 @@ def _html_page() -> str:
       const state = data.state || {};
       const recent = data.recent_attempts || [];
       const winners = data.winners || [];
+      const elites = data.elites || [];
       const weights = data.average_weights || [];
       return '<section class="calibration-panel">' +
         '<div class="game-head"><h2>Calibração 24/7</h2><span class="tag">' + escapeHtml(state.status || 'sem status') + '</span></div>' +
@@ -273,9 +274,21 @@ def _html_page() -> str:
           statusCard('Cache atual', state.current_cache_status || state.last_cache_status || '-') +
           statusCard('Cache última tentativa', state.last_cache_status || '-') +
           statusCard('Combinações no cache', state.last_cache_rows || '-') +
+          statusCard('Estratégia atual', state.current_weight_strategy || state.last_weight_strategy || '-') +
+          statusCard('Elites 11+', state.elite_count_current || 0) +
+          statusCard('Melhor elite', state.elite_best_hits_current || 0) +
+          statusCard('Fonte elite', state.current_elite_source_hits || state.last_elite_source_hits || '-') +
         '</div>' +
         '<div class="exclusives"><strong>Melhor jogo atual:</strong> ' + escapeHtml(state.best_game_current || '-') + '</div>' +
         '<section class="comparison"><h2>Média atual dos pesos vencedores</h2>' + weightRows(weights) + '</section>' +
+        '<section class="comparison"><h2>Elites 11+ salvas</h2>' + tableRows(elites, [
+          {key: 'target_concurso', label: 'Concurso'},
+          {key: 'tentativa', label: 'Tentativa'},
+          {key: 'melhor_acerto', label: 'Melhor'},
+          {key: 'weight_strategy', label: 'Estratégia'},
+          {key: 'elite_source_hits', label: 'Fonte'},
+          {key: 'melhor_jogo', label: 'Melhor jogo'}
+        ]) + '</section>' +
         '<section class="comparison"><h2>Últimas tentativas</h2>' + tableRows(recent, [
           {key: 'target_concurso', label: 'Concurso'},
           {key: 'tentativa', label: 'Tentativa'},
@@ -415,6 +428,7 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                         state_json_path=config.calibration_lab_state_json_path,
                         attempts_csv_path=config.calibration_lab_attempts_csv_path,
                         winners_csv_path=config.calibration_lab_winners_csv_path,
+                        elites_csv_path=config.calibration_lab_elites_csv_path,
                         average_weights_csv_path=config.calibration_lab_average_weights_csv_path,
                         engine_weights_json_path=config.engine_calibration_weights_json_path,
                     )

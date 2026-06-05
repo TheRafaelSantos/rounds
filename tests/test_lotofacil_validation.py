@@ -10,7 +10,15 @@ import pandas as pd
 
 from lotofacil_analytics.auditoria import build_auditoria
 from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
-from lotofacil_analytics.calibration_lab import _append_csv, _read_csv, load_calibration_lab_status, run_calibration_lab
+from lotofacil_analytics.calibration_lab import (
+    WEIGHT_COMPONENTS,
+    _append_csv,
+    _read_csv,
+    _sync_elites_from_attempts,
+    _weights_for_attempt,
+    load_calibration_lab_status,
+    run_calibration_lab,
+)
 from lotofacil_analytics.calibration_pilot import run_calibration_pilot
 from lotofacil_analytics.climate_pipeline import ClimatePipeline
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
@@ -527,6 +535,7 @@ class LotofacilValidationTest(unittest.TestCase):
                 "state_json_path": base / "lab_state.json",
                 "attempts_csv_path": base / "lab_attempts.csv",
                 "winners_csv_path": base / "lab_winners.csv",
+                "elites_csv_path": base / "lab_elites.csv",
                 "summary_csv_path": base / "lab_summary.csv",
                 "average_weights_csv_path": base / "lab_average_weights.csv",
                 "excel_path": base / "lab.xlsx",
@@ -554,6 +563,7 @@ class LotofacilValidationTest(unittest.TestCase):
                 state_json_path=paths["state_json_path"],
                 attempts_csv_path=paths["attempts_csv_path"],
                 winners_csv_path=paths["winners_csv_path"],
+                elites_csv_path=paths["elites_csv_path"],
                 average_weights_csv_path=paths["average_weights_csv_path"],
                 engine_weights_json_path=paths["engine_weights_json_path"],
             )
@@ -569,6 +579,70 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertTrue(paths["summary_csv_path"].exists())
             self.assertTrue(paths["average_weights_csv_path"].exists())
             self.assertTrue((paths["cache_dir"] / "concurso_14" / "scores.npy").exists())
+
+    def test_calibration_lab_saves_elites_from_11_to_15_hits(self) -> None:
+        weights = resolve_exhaustive_weights({component: 1.0 for component in WEIGHT_COMPONENTS})
+        rows = []
+        for attempt, hits in enumerate([10, 11, 12, 13, 14, 15], start=1):
+            row = {
+                "target_concurso": 2500,
+                "tentativa": attempt,
+                "melhor_acerto": hits,
+                "melhor_jogo": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15",
+                "jogo_1": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15",
+                "acertos_jogo_1": hits,
+                "jogo_2": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 16",
+                "acertos_jogo_2": max(0, hits - 1),
+                "weight_strategy": "test",
+                "score_weights": "test",
+            }
+            for component, value in weights.items():
+                row[f"peso_{component}"] = value
+            rows.append(row)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            elites = _sync_elites_from_attempts(
+                attempts=pd.DataFrame(rows),
+                elites_csv_path=Path(tmp) / "lab_elites.csv",
+            )
+
+            self.assertEqual(elites["melhor_acerto"].astype(int).tolist(), [15, 14, 13, 12, 11])
+            self.assertNotIn(10, elites["melhor_acerto"].astype(int).tolist())
+
+    def test_calibration_lab_uses_elite_weights_as_anchor(self) -> None:
+        weights = resolve_exhaustive_weights({component: index + 1 for index, component in enumerate(WEIGHT_COMPONENTS)})
+        row = {
+            "target_concurso": 2500,
+            "tentativa": 7,
+            "melhor_acerto": 12,
+            "melhor_jogo": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15",
+            "weight_strategy": "test",
+        }
+        for component, value in weights.items():
+            row[f"peso_{component}"] = value
+
+        with tempfile.TemporaryDirectory() as tmp:
+            elites = _sync_elites_from_attempts(
+                attempts=pd.DataFrame([row]),
+                elites_csv_path=Path(tmp) / "lab_elites.csv",
+            )
+            selected_weights = {}
+            meta = {}
+            for seed in range(50):
+                selected_weights, meta = _weights_for_attempt(
+                    target_concurso=2500,
+                    attempt=20,
+                    seed=seed,
+                    average_winner_weights=None,
+                    best_current_weights=None,
+                    elite_rows=elites,
+                )
+                if str(meta.get("weight_strategy", "")).startswith("elite_"):
+                    break
+
+            self.assertTrue(str(meta.get("weight_strategy", "")).startswith("elite_"))
+            self.assertEqual(str(meta.get("elite_source_hits", "")), "12")
+            self.assertAlmostEqual(sum(selected_weights.values()), 1.0, places=6)
 
     def test_calibration_lab_attempt_csv_evolves_cache_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

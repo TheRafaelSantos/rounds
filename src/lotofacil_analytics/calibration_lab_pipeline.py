@@ -56,6 +56,7 @@ class CalibrationLabPipeline:
             state_json_path=self.config.calibration_lab_state_json_path,
             attempts_csv_path=self.config.calibration_lab_attempts_csv_path,
             winners_csv_path=self.config.calibration_lab_winners_csv_path,
+            elites_csv_path=self.config.calibration_lab_elites_csv_path,
             summary_csv_path=self.config.calibration_lab_summary_csv_path,
             average_weights_csv_path=self.config.calibration_lab_average_weights_csv_path,
             excel_path=self.config.calibration_lab_excel_path,

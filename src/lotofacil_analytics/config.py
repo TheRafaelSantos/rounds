@@ -343,6 +343,10 @@ class AppConfig:
         return self.processed_dir / "lotofacil_calibration_lab_winners.csv"
 
     @property
+    def calibration_lab_elites_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_calibration_lab_elites.csv"
+
+    @property
     def calibration_lab_summary_csv_path(self) -> Path:
         return self.processed_dir / "lotofacil_calibration_lab_summary.csv"
 
