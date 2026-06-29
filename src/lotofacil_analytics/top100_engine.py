@@ -22,6 +22,7 @@ from .normalize import DEZENAS
 from .selection_guard import enrich_candidates_with_decision_guard
 from .storage import sanitize_dataframe_for_tabular_output
 from .supervised_calibration import _apply_weights, _score_candidate_table
+from .top50_refinement import apply_top50_refinement
 
 
 NUMBERS = tuple(range(1, 26))
@@ -442,7 +443,12 @@ def _safe_float(row: Mapping[str, object], column: str, default: float = 0.0) ->
     return float(default) if pd.isna(out) else out
 
 
-def enrich_candidates_with_top100_scores(candidates: pd.DataFrame, concursos: pd.DataFrame) -> pd.DataFrame:
+def enrich_candidates_with_top100_scores(
+    candidates: pd.DataFrame,
+    concursos: pd.DataFrame,
+    *,
+    refinement_payload: Mapping[str, object] | None = None,
+) -> pd.DataFrame:
     if candidates.empty:
         return candidates.copy()
     prepared = candidates.copy().reset_index(drop=True)
@@ -464,6 +470,7 @@ def enrich_candidates_with_top100_scores(candidates: pd.DataFrame, concursos: pd
         rows.append(out)
     enriched = pd.DataFrame(rows)
     enriched["score_top100"] = pd.to_numeric(enriched["score_learning_to_rank"], errors="coerce").fillna(0.0)
+    enriched = apply_top50_refinement(enriched, refinement_payload, override_score_top100=True)
     enriched = enriched.sort_values(["score_top100", "score_final", "nums"], ascending=[False, False, True]).reset_index(drop=True)
     enriched.insert(0, "rank_top100_pool", range(1, len(enriched) + 1))
     return enriched
@@ -506,7 +513,15 @@ def select_top100_portfolio(candidates: pd.DataFrame, *, top_count: int, max_ove
     return out_df
 
 
-def _build_report(final_games: pd.DataFrame, *, summary: Top100Summary, target_context: object, weights: Mapping[str, float]) -> str:
+def _build_report(
+    final_games: pd.DataFrame,
+    *,
+    summary: Top100Summary,
+    target_context: object,
+    weights: Mapping[str, float],
+    refinement_payload: Mapping[str, object] | None = None,
+) -> str:
+    refinement_metrics = refinement_payload.get("metrics", {}) if isinstance(refinement_payload, dict) and isinstance(refinement_payload.get("metrics"), dict) else {}
     lines = [
         "# Relatorio tecnico - Motor Top 100 / Top 50",
         "",
@@ -517,6 +532,10 @@ def _build_report(final_games: pd.DataFrame, *, summary: Top100Summary, target_c
         f"Top solicitado: {summary.top_count}",
         f"Pool analisado: {summary.top_pool}",
         f"Pesos supervisionados: {format_exhaustive_weights(resolve_exhaustive_weights(weights))}",
+        f"Refinador Top50 aplicado: {'sim' if refinement_payload else 'nao'}",
+        f"Refinador Top50 modelo: {refinement_payload.get('model', '-') if isinstance(refinement_payload, dict) else '-'}",
+        f"Refinador Top50 rank medio historico antes/depois: {refinement_metrics.get('rank_before_avg', '-')} / {refinement_metrics.get('rank_after_avg', '-')}",
+        f"Refinador Top50 Hit@50 historico antes/depois: {refinement_metrics.get('hit_top50_before', '-')}% / {refinement_metrics.get('hit_top50_after', '-')}%",
         "",
         "## Contexto",
         "",
@@ -537,7 +556,8 @@ def _build_report(final_games: pd.DataFrame, *, summary: Top100Summary, target_c
         "7. residuos matematicos mod 3, mod 4, mod 5 e finais;",
         "8. regimes historicos recentes e longos;",
         "9. detector de falso positivo;",
-        "10. score learning-to-rank interno para reordenar os candidatos.",
+        "10. score learning-to-rank interno para reordenar os candidatos;",
+        "11. refinador Top50 pos-erro, quando treinado, para subir gabaritos historicos contra falsos positivos.",
         "",
         "## Top 100",
         "",
@@ -546,6 +566,7 @@ def _build_report(final_games: pd.DataFrame, *, summary: Top100Summary, target_c
         lines.append(
             f"{int(row['rank_top100']):03d}. {row['nums']} | grupo={row['grupo_top']} | "
             f"score_top100={float(row['score_top100']):.6f} | score_base={float(row.get('score_final', 0.0)):.6f} | "
+            f"score_refinado={float(row.get('score_top50_refinado', row.get('score_top100', 0.0))):.6f} | "
             f"comb_avancado={float(row.get('score_combinatorio_avancado', 0.0)):.2f} | "
             f"grafo={float(row.get('score_grafo_dezenas', 0.0)):.2f} | complemento={float(row.get('score_complemento_ausentes', 0.0)):.2f} | "
             f"geometria={float(row.get('score_geometria_volante', 0.0)):.2f} | falso_positivo={float(row.get('score_detector_falso_positivo', 0.0)):.2f}"
@@ -574,6 +595,7 @@ def build_top100_prediction(
     climate_features: pd.DataFrame | None,
     target_climate: Mapping[str, object] | None,
     weights: Mapping[str, float] | None,
+    refinement_payload: Mapping[str, object] | None = None,
     prediction_csv_path: Path,
     report_path: Path,
     excel_path: Path,
@@ -607,7 +629,7 @@ def build_top100_prediction(
             climate_features=climate_features,
             target_climate=target_climate,
         )
-    enriched = enrich_candidates_with_top100_scores(candidates.head(int(top_pool)), df)
+    enriched = enrich_candidates_with_top100_scores(candidates.head(int(top_pool)), df, refinement_payload=refinement_payload)
     final_games = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
     generated_at = datetime.now().isoformat(timespec="seconds")
     final_games.insert(0, "generated_at", generated_at)
@@ -630,7 +652,16 @@ def build_top100_prediction(
         report_path=str(report_path),
         excel_path=str(excel_path),
     )
-    report_path.write_text(_build_report(final_games, summary=summary, target_context=target_context, weights=resolved_weights), encoding="utf-8")
+    report_path.write_text(
+        _build_report(
+            final_games,
+            summary=summary,
+            target_context=target_context,
+            weights=resolved_weights,
+            refinement_payload=refinement_payload,
+        ),
+        encoding="utf-8",
+    )
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
         final_games.to_excel(writer, index=False, sheet_name="top100")
         final_games.head(50).to_excel(writer, index=False, sheet_name="top50")
@@ -675,6 +706,7 @@ def run_top100_backtest(
     draw_minute: int,
     exhaustive_limit: int | None,
     weights: Mapping[str, float] | None,
+    refinement_payload: Mapping[str, object] | None = None,
     results_csv_path: Path,
     summary_csv_path: Path,
     excel_path: Path,
@@ -708,7 +740,7 @@ def run_top100_backtest(
             climate_features=climate_features,
             target_climate=target_climate,
         )
-        enriched = enrich_candidates_with_top100_scores(candidates.head(int(top_pool)), train_df)
+        enriched = enrich_candidates_with_top100_scores(candidates.head(int(top_pool)), train_df, refinement_payload=refinement_payload)
         selected = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
         selected_nums = set(str(value) for value in selected["nums"].tolist())
         actual_row = _actual_candidate_row(
@@ -720,7 +752,11 @@ def run_top100_backtest(
             weights=resolved_weights,
         )
         diagnostic_pool = pd.concat([enriched, actual_row], ignore_index=True)
-        diagnostic_ranked = enrich_candidates_with_top100_scores(diagnostic_pool, train_df).sort_values(
+        diagnostic_ranked = enrich_candidates_with_top100_scores(
+            diagnostic_pool,
+            train_df,
+            refinement_payload=refinement_payload,
+        ).sort_values(
             ["score_top100", "score_final", "nums"], ascending=[False, False, True]
         ).reset_index(drop=True)
         matches = diagnostic_ranked.index[diagnostic_ranked["nums"] == actual_text].tolist()

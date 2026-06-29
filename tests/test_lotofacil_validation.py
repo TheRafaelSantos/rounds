@@ -40,6 +40,7 @@ from lotofacil_analytics.predictor import select_final_games
 from lotofacil_analytics.selection_guard import build_number_guard_table, enrich_candidates_with_decision_guard
 from lotofacil_analytics.supervised_calibration import load_supervised_calibration_status, run_supervised_calibration
 from lotofacil_analytics.temporal_deep import build_temporal_deep_rows, temporal_deep_number_scores
+from lotofacil_analytics.top50_refinement_engine import load_top50_refinement_status, run_top50_refinement
 from lotofacil_analytics.top100_engine import build_top100_prediction, run_top100_backtest
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.transition_analysis import build_transition_model, build_transition_outputs, score_transition_candidate
@@ -910,6 +911,54 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertTrue((base / "bt_summary.csv").exists())
             self.assertTrue((base / "bt.xlsx").exists())
 
+    def test_top50_refinement_writes_outputs(self) -> None:
+        rows = []
+        for idx in range(1, 18):
+            payload = payload_with_dezenas(idx, cyclic_dezenas(idx))
+            payload["nomeMunicipioUFSorteio"] = "SAO PAULO, SP"
+            payload["localSorteio"] = "ESPAÇO DA SORTE"
+            rows.append(normalize_contest(payload))
+        concursos = pd.DataFrame(rows)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            summary = run_top50_refinement(
+                concursos,
+                climate_features=pd.DataFrame(),
+                from_concurso=14,
+                to_concurso=15,
+                max_contests=2,
+                min_history=10,
+                top_pool=20,
+                exhaustive_limit=300,
+                seed=123,
+                draw_hour=20,
+                draw_minute=0,
+                reset=True,
+                base_weights=None,
+                state_json_path=base / "state.json",
+                results_csv_path=base / "results.csv",
+                summary_csv_path=base / "summary.csv",
+                weights_csv_path=base / "weights.csv",
+                excel_path=base / "refiner.xlsx",
+                weights_json_path=base / "weights.json",
+            )
+            status = load_top50_refinement_status(
+                state_json_path=base / "state.json",
+                results_csv_path=base / "results.csv",
+                summary_csv_path=base / "summary.csv",
+                weights_csv_path=base / "weights.csv",
+                weights_json_path=base / "weights.json",
+            )
+
+            self.assertEqual(summary.total_contests_processed, 2)
+            self.assertTrue((base / "weights.json").exists())
+            self.assertTrue((base / "results.csv").exists())
+            self.assertTrue((base / "refiner.xlsx").exists())
+            self.assertGreater(len(status["weights"]), 0)
+            self.assertGreater(len(status["recent_results"]), 0)
+            self.assertIn("hit_top50_after", status["state"])
+
     def test_web_interface_html_contains_expected_controls(self) -> None:
         html = _html_page()
         self.assertIn("Lotofacil Analytics", html)
@@ -923,6 +972,8 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("/api/mandel", html)
         self.assertIn("/api/top100", html)
         self.assertIn("/api/top100-backtest", html)
+        self.assertIn("/api/top50-refinement/status", html)
+        self.assertIn("/api/top50-refinement", html)
         self.assertIn("/report", html)
         self.assertIn("/mandel-report", html)
         self.assertIn("/top100-report", html)
@@ -939,6 +990,8 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("Melhores posicionamentos aprendidos", html)
         self.assertIn("Gerar Top 100", html)
         self.assertIn("Backtest Top 100", html)
+        self.assertIn("Motor 3.0 Top50", html)
+        self.assertIn("Treinar Top50", html)
 
     def test_generate_games_balanceado_returns_requested_quantity(self) -> None:
         rows = []

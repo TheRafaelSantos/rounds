@@ -377,3 +377,27 @@ class AppConfig:
     @property
     def top100_backtest_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_backtest_top100.xlsx"
+
+    @property
+    def top50_refinement_state_json_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top50_refinement_state.json"
+
+    @property
+    def top50_refinement_results_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top50_refinement_results.csv"
+
+    @property
+    def top50_refinement_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top50_refinement_summary.csv"
+
+    @property
+    def top50_refinement_weights_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top50_refinement_weights.csv"
+
+    @property
+    def top50_refinement_weights_json_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top50_refinement_weights.json"
+
+    @property
+    def top50_refinement_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_top50_refinement.xlsx"

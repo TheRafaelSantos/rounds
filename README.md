@@ -174,6 +174,31 @@ Arquivos principais:
 
 Na interface web, clique em **Aprendizado supervisionado** para acompanhar status, progresso no historico elegivel, pesos atuais, ranking antes/depois, melhores posicionamentos, evolucao por blocos e ultimos concursos aprendidos.
 
+Rodar Motor 3.0 Refinador Top50:
+
+```powershell
+python main.py --refine-top50 --top50-refine-from-concurso 1 --top50-refine-min-history 300 --top50-refine-pool 2000 --top50-refine-exhaustive-limit 50000 --top50-refine-max-contests 5 --draw-hour 20 --draw-minute 0
+```
+
+Rodar continuamente e retomar de onde parou:
+
+```powershell
+python main.py --refine-top50 --top50-refine-loop --top50-refine-from-concurso 1 --top50-refine-min-history 300 --top50-refine-pool 2000 --top50-refine-exhaustive-limit 50000 --top50-refine-max-contests 5 --top50-refine-sleep-seconds 30 --draw-hour 20 --draw-minute 0
+```
+
+Esse refinador executa um aprendizado pos-erro sem vazamento de gabarito futuro. Para cada concurso historico, ele gera o ranking usando somente concursos anteriores, localiza em qual posicao a sequencia real ficou depois que o concurso ja esta encerrado, compara o gabarito contra os falsos positivos acima dele e aprende pesos positivos/penalizadores para tentar subir casos semelhantes em concursos futuros. O Top 100 passa a carregar automaticamente `lotofacil_top50_refinement_weights.json` quando esse arquivo existir.
+
+Arquivos principais:
+
+1. `data/processed/lotofacil_top50_refinement_state.json`;
+2. `data/processed/lotofacil_top50_refinement_results.csv`;
+3. `data/processed/lotofacil_top50_refinement_summary.csv`;
+4. `data/processed/lotofacil_top50_refinement_weights.csv`;
+5. `data/processed/lotofacil_top50_refinement_weights.json`;
+6. `data/exports/lotofacil_top50_refinement.xlsx`.
+
+Na interface web, clique em **Motor 3.0 Top50** para acompanhar rank antes/depois, Hit@50, Hit@100, pesos que puxam candidatos para cima e pesos que penalizam falsos Top50.
+
 Gerar ranking Top 100 / Top 50:
 
 ```powershell
@@ -191,7 +216,8 @@ Esse comando cria uma camada superior sobre o motor exaustivo e os pesos supervi
 7. residuos matematicos mod 3, mod 4, mod 5 e finais;
 8. regimes historicos recentes e longos;
 9. detector de falso positivo;
-10. score interno de ranking para reordenar os candidatos.
+10. score interno de ranking para reordenar os candidatos;
+11. Motor 3.0 Refinador Top50, quando treinado, para reordenar candidatos contra falsos positivos historicos.
 
 Arquivos gerados:
 

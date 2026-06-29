@@ -17,6 +17,7 @@ from .mandel_pipeline import MandelPipeline
 from .pipeline import LotofacilPipeline
 from .predictor_pipeline import PredictorPipeline
 from .supervised_calibration import load_supervised_calibration_status
+from .top50_refinement_pipeline import Top50RefinementPipeline
 from .top100_pipeline import Top100Pipeline
 from .transition_pipeline import TransitionPipeline
 
@@ -94,12 +95,15 @@ def _html_page() -> str:
     <button onclick="predict()">Gerar 2 jogos</button>
     <button onclick="top100()">Gerar Top 100</button>
     <button onclick="top100Backtest()">Backtest Top 100</button>
+    <button onclick="top50RefinementStatus()">Motor 3.0 Top50</button>
+    <button onclick="top50RefinementRun()">Treinar Top50</button>
     <button onclick="mandel()">Plano Mandel/bolão</button>
     <button onclick="supervisedStatus()">Aprendizado supervisionado</button>
     <button onclick="window.location='/report'">Baixar relatorio</button>
     <button onclick="window.location='/single-report'">Baixar relatorio jogo unico</button>
     <button onclick="window.location='/mandel-report'">Baixar relatorio Mandel</button>
     <button onclick="window.location='/top100-report'">Baixar relatorio Top 100</button>
+    <button onclick="window.location='/top50-refinement-report'">Baixar refinador Top50</button>
   </div>
   <section class="games" id="games"></section>
   <pre id="output">Pronto.</pre>
@@ -381,6 +385,80 @@ def _html_page() -> str:
         ]) + '</section>' +
       '</section>';
     }
+    function refinementWeightRows(rows, columnPrefix) {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return '<div class="muted">Sem pesos refinados ainda.</div>';
+      }
+      const key = columnPrefix === 'neg' ? 'peso_penalizador_percentual' : 'peso_positivo_percentual';
+      const filtered = rows.filter(function(row) { return Number(row[key] || 0) > 0; })
+        .sort(function(a, b) { return Number(b[key] || 0) - Number(a[key] || 0); })
+        .slice(0, 12);
+      if (!filtered.length) {
+        return '<div class="muted">Sem pesos relevantes nesta categoria.</div>';
+      }
+      return '<div class="metrics">' + filtered.map(function(row) {
+        return metricBar(row.feature, Number(row[key] || 0), columnPrefix !== 'neg');
+      }).join('') + '</div>';
+    }
+    function renderTop50Refinement(data) {
+      const state = data.state || {};
+      const recent = data.recent_results || [];
+      const best = data.best_results || [];
+      const blocks = data.progress_blocks || [];
+      const weights = data.weights || [];
+      const processed = state.total_contests_processed || recent.length || 0;
+      return '<section class="calibration-panel">' +
+        '<div class="game-head"><h2>Motor 3.0 Refinador Top50</h2><span class="tag">' + escapeHtml(state.status || 'sem status') + '</span></div>' +
+        '<div class="status-grid">' +
+          statusCard('Concurso atual', state.current_concurso || '-') +
+          statusCard('Último processado', state.last_concurso || '-') +
+          statusCard('Concursos refinados', processed) +
+          statusCard('Progresso elegível', state.progress_percent !== undefined ? Number(state.progress_percent).toFixed(2) + '%' : '-') +
+          statusCard('Pendentes elegíveis', state.remaining_eligible_count ?? '-') +
+          statusCard('Próximo pendente', state.next_pending_concurso || '-') +
+          statusCard('Rank médio antes', state.rank_before_avg ?? '-') +
+          statusCard('Rank médio refinado', state.rank_after_avg ?? '-') +
+          statusCard('Melhora média', state.rank_improvement_avg ?? '-') +
+          statusCard('Hit@50 antes', state.hit_top50_before !== undefined ? Number(state.hit_top50_before).toFixed(2) + '%' : '-') +
+          statusCard('Hit@50 refinado', state.hit_top50_after !== undefined ? Number(state.hit_top50_after).toFixed(2) + '%' : '-') +
+          statusCard('Hit@100 antes', state.hit_top100_before !== undefined ? Number(state.hit_top100_before).toFixed(2) + '%' : '-') +
+          statusCard('Hit@100 refinado', state.hit_top100_after !== undefined ? Number(state.hit_top100_after).toFixed(2) + '%' : '-') +
+          statusCard('Último rank antes', state.last_rank_top100_antes ?? '-') +
+          statusCard('Último rank refinado', state.last_rank_top50_refinado ?? '-') +
+          statusCard('Última melhora', state.last_melhora_rank_refinador ?? '-') +
+          statusCard('Pool', state.top_pool || '-') +
+          statusCard('Histórico mínimo', state.min_history || '-') +
+          statusCard('Tempo execução atual', state.elapsed_seconds_current_run ? Number(state.elapsed_seconds_current_run).toFixed(0) + 's' : '-') +
+        '</div>' +
+        '<div class="exclusives"><strong>Como ler:</strong> este painel mostra aprendizado pós-erro em concursos já encerrados. Ele aprende quais sinais subiriam o gabarito histórico acima dos falsos positivos e salva pesos para concursos futuros.</div>' +
+        '<section class="comparison"><h2>Pesos que puxam para cima</h2>' + refinementWeightRows(weights, 'pos') + '</section>' +
+        '<section class="comparison"><h2>Pesos penalizadores de falso Top50</h2>' + refinementWeightRows(weights, 'neg') + '</section>' +
+        '<section class="comparison"><h2>Evolução por blocos</h2>' + tableRows(blocks, [
+          {key: 'bloco', label: 'Bloco'},
+          {key: 'concursos', label: 'Concursos'},
+          {key: 'rank_antes_medio', label: 'Rank antes'},
+          {key: 'rank_refinado_medio', label: 'Rank refinado'},
+          {key: 'melhora_media', label: 'Melhora'},
+          {key: 'hit_top50_refinado_pct', label: 'Hit@50 refinado'},
+          {key: 'hit_top100_refinado_pct', label: 'Hit@100 refinado'}
+        ]) + '</section>' +
+        '<section class="comparison"><h2>Melhores refinamentos</h2>' + tableRows(best, [
+          {key: 'concurso', label: 'Concurso'},
+          {key: 'rank_top100_antes', label: 'Rank antes'},
+          {key: 'rank_top50_refinado', label: 'Rank refinado'},
+          {key: 'melhora_rank_refinador', label: 'Melhora'},
+          {key: 'jogo_real', label: 'Jogo real'}
+        ]) + '</section>' +
+        '<section class="comparison"><h2>Últimos concursos refinados</h2>' + tableRows(recent, [
+          {key: 'concurso', label: 'Concurso'},
+          {key: 'rank_top100_antes', label: 'Rank antes'},
+          {key: 'rank_top50_refinado', label: 'Rank refinado'},
+          {key: 'hit_top50_refinado', label: 'Top50'},
+          {key: 'hit_top100_refinado', label: 'Top100'},
+          {key: 'jogo_real', label: 'Jogo real'}
+        ]) + '</section>' +
+      '</section>';
+    }
     async function request(path, options) {
       const output = document.getElementById('output');
       output.textContent = 'Processando...';
@@ -438,6 +516,14 @@ def _html_page() -> str:
     async function top100Backtest() {
       const data = await request('/api/top100-backtest', {method: 'POST'});
       document.getElementById('games').innerHTML = renderTop100Backtest(data);
+    }
+    async function top50RefinementStatus() {
+      const data = await request('/api/top50-refinement/status');
+      document.getElementById('games').innerHTML = renderTop50Refinement(data);
+    }
+    async function top50RefinementRun() {
+      const data = await request('/api/top50-refinement', {method: 'POST'});
+      document.getElementById('games').innerHTML = renderTop50Refinement(data.status || data);
     }
   </script>
 </body>
@@ -516,6 +602,9 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                     )
                 )
                 return
+            if self.path == "/api/top50-refinement/status":
+                self._handle_json(lambda: Top50RefinementPipeline(config=config, logger=logger).status())
+                return
             if self.path == "/report":
                 report_path = config.prediction_report_path
                 if not report_path.exists():
@@ -564,6 +653,19 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/markdown; charset=utf-8")
                 self.send_header("Content-Disposition", 'attachment; filename="lotofacil_prediction_top100_report.md"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if self.path == "/top50-refinement-report":
+                report_path = config.top50_refinement_excel_path
+                if not report_path.exists():
+                    _json_response(self, HTTPStatus.NOT_FOUND, {"error": "refinador ainda nao gerou Excel; use Treinar Top50 primeiro"})
+                    return
+                body = report_path.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                self.send_header("Content-Disposition", 'attachment; filename="lotofacil_top50_refinement.xlsx"')
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -668,6 +770,25 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                     return payload
 
                 self._handle_json(top100_backtest_payload)
+                return
+            if self.path == "/api/top50-refinement":
+                def top50_refinement_payload() -> dict:
+                    pipeline = Top50RefinementPipeline(config=config, logger=logger)
+                    summary = pipeline.run(
+                        from_concurso=1,
+                        to_concurso=None,
+                        max_contests=1,
+                        min_history=300,
+                        top_pool=500,
+                        exhaustive_limit=10000,
+                        seed=123,
+                        draw_hour=20,
+                        draw_minute=0,
+                        reset=False,
+                    )
+                    return {"summary": summary.__dict__.copy(), "status": pipeline.status()}
+
+                self._handle_json(top50_refinement_payload)
                 return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})
 

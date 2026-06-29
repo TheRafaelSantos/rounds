@@ -48,3 +48,39 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
     restart: unless-stopped
+
+  lotofacil-top50-refiner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lotofacil-top50-refiner
+    command:
+      [
+        "python",
+        "main.py",
+        "--refine-top50",
+        "--top50-refine-loop",
+        "--top50-refine-from-concurso",
+        "1",
+        "--top50-refine-min-history",
+        "300",
+        "--top50-refine-pool",
+        "2000",
+        "--top50-refine-exhaustive-limit",
+        "50000",
+        "--top50-refine-max-contests",
+        "5",
+        "--top50-refine-sleep-seconds",
+        "30",
+        "--draw-hour",
+        "20",
+        "--draw-minute",
+        "0"
+      ]
+    environment:
+      TZ: America/Sao_Paulo
+      PYTHONPATH: /app/src
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped

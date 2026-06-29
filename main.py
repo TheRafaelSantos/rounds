@@ -34,6 +34,7 @@ from lotofacil_analytics.post_result_analysis import analyze_post_result
 from lotofacil_analytics.predictor_pipeline import PredictorPipeline
 from lotofacil_analytics.interface_web import run_web_server
 from lotofacil_analytics.supervised_calibration_pipeline import SupervisedCalibrationPipeline
+from lotofacil_analytics.top50_refinement_pipeline import Top50RefinementPipeline
 from lotofacil_analytics.top100_pipeline import Top100Pipeline
 from lotofacil_analytics.transition_pipeline import TransitionPipeline
 from lotofacil_analytics.temporal_deep_pipeline import TemporalDeepPipeline
@@ -78,6 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--tune-weights", action="store_true", help="Testa perfis de pesos e salva o melhor perfil observado.")
     mode.add_argument("--calibrate-engine", action="store_true", help="Calibra pesos do motor por walk-forward contra concursos passados.")
     mode.add_argument("--supervised-calibration", action="store_true", help="Roda aprendizado supervisionado com gabarito historico e aplica pesos medios ao motor.")
+    mode.add_argument("--refine-top50", action="store_true", help="Roda Motor 3.0 Refinador Top50 pos-erro contra hard negatives historicos.")
     mode.add_argument("--top100", action="store_true", help="Gera ranking Top 100 / Top 50 com estudos avancados.")
     mode.add_argument("--top100-backtest", action="store_true", help="Valida historicamente o ranking Top 100 / Top 50.")
     mode.add_argument("--analyze-result", action="store_true", help="Analisa resultado real contra os jogos previstos.")
@@ -134,6 +136,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--supervised-reset", action="store_true", help="Apaga a memoria anterior do --supervised-calibration.")
     parser.add_argument("--supervised-loop", action="store_true", help="Mantem o --supervised-calibration rodando em ciclos retomaveis.")
     parser.add_argument("--supervised-sleep-seconds", type=int, default=30, help="Pausa entre ciclos do --supervised-loop.")
+    parser.add_argument("--top50-refine-from-concurso", type=int, default=1, help="Concurso inicial do --refine-top50.")
+    parser.add_argument("--top50-refine-to-concurso", type=int, default=None, help="Concurso final do --refine-top50; omitido usa ultimo local.")
+    parser.add_argument("--top50-refine-max-contests", type=int, default=5, help="Maximo de concursos nesta execucao do --refine-top50; 0 processa todos.")
+    parser.add_argument("--top50-refine-min-history", type=int, default=300, help="Historico minimo anterior para cada concurso do refinador Top50.")
+    parser.add_argument("--top50-refine-pool", type=int, default=2000, help="Quantidade de candidatos fortes usados pelo refinador Top50.")
+    parser.add_argument("--top50-refine-exhaustive-limit", type=int, default=50000, help="Limite tecnico de combinacoes no refinador Top50; 0 avalia todas.")
+    parser.add_argument("--top50-refine-reset", action="store_true", help="Apaga a memoria anterior do --refine-top50.")
+    parser.add_argument("--top50-refine-loop", action="store_true", help="Mantem o --refine-top50 rodando em ciclos retomaveis.")
+    parser.add_argument("--top50-refine-sleep-seconds", type=int, default=30, help="Pausa entre ciclos do --top50-refine-loop.")
     parser.add_argument("--actual-numbers", default=None, help="15 dezenas sorteadas para --analyze-result.")
     parser.add_argument("--result-label", default="resultado", help="Rotulo do resultado analisado.")
     parser.add_argument("--result-concurso", type=int, default=None, help="Numero do concurso analisado em --analyze-result.")
@@ -186,6 +197,7 @@ def main() -> int:
         or args.tune_weights
         or args.calibrate_engine
         or args.supervised_calibration
+        or args.refine_top50
         or args.top100
         or args.top100_backtest
         or args.analyze_result
@@ -356,6 +368,42 @@ def main() -> int:
                 draw_minute=args.draw_minute,
                 min_history=args.supervised_min_history,
                 reset=args.supervised_reset,
+            )
+        elif args.refine_top50:
+            pipeline_refine = Top50RefinementPipeline(config=config, logger=logger)
+            refine_limit = args.top50_refine_exhaustive_limit if int(args.top50_refine_exhaustive_limit) > 0 else None
+            if args.top50_refine_loop:
+                reset_next_cycle = bool(args.top50_refine_reset)
+                while True:
+                    summary = pipeline_refine.run(
+                        from_concurso=args.top50_refine_from_concurso,
+                        to_concurso=args.top50_refine_to_concurso,
+                        max_contests=args.top50_refine_max_contests,
+                        min_history=args.top50_refine_min_history,
+                        top_pool=args.top50_refine_pool,
+                        exhaustive_limit=refine_limit,
+                        seed=args.seed,
+                        draw_hour=args.draw_hour,
+                        draw_minute=args.draw_minute,
+                        reset=reset_next_cycle,
+                    )
+                    print(summary.to_console(), flush=True)
+                    reset_next_cycle = False
+                    sleep_seconds = max(5, int(args.top50_refine_sleep_seconds))
+                    if summary.status == "complete":
+                        logger.info("Refinador Top50 completo; aguardando %s segundos.", sleep_seconds)
+                    time.sleep(sleep_seconds)
+            summary = pipeline_refine.run(
+                from_concurso=args.top50_refine_from_concurso,
+                to_concurso=args.top50_refine_to_concurso,
+                max_contests=args.top50_refine_max_contests,
+                min_history=args.top50_refine_min_history,
+                top_pool=args.top50_refine_pool,
+                exhaustive_limit=refine_limit,
+                seed=args.seed,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+                reset=args.top50_refine_reset,
             )
         elif args.top100:
             summary = Top100Pipeline(config=config, logger=logger).predict(
