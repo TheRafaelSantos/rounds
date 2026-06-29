@@ -17,6 +17,7 @@ from .mandel_pipeline import MandelPipeline
 from .pipeline import LotofacilPipeline
 from .predictor_pipeline import PredictorPipeline
 from .supervised_calibration import load_supervised_calibration_status
+from .top100_pipeline import Top100Pipeline
 from .transition_pipeline import TransitionPipeline
 
 
@@ -91,11 +92,14 @@ def _html_page() -> str:
     <button onclick="climate()">Atualizar clima</button>
     <button onclick="predictSingle()">Gerar jogo unico</button>
     <button onclick="predict()">Gerar 2 jogos</button>
+    <button onclick="top100()">Gerar Top 100</button>
+    <button onclick="top100Backtest()">Backtest Top 100</button>
     <button onclick="mandel()">Plano Mandel/bolão</button>
     <button onclick="supervisedStatus()">Aprendizado supervisionado</button>
     <button onclick="window.location='/report'">Baixar relatorio</button>
     <button onclick="window.location='/single-report'">Baixar relatorio jogo unico</button>
     <button onclick="window.location='/mandel-report'">Baixar relatorio Mandel</button>
+    <button onclick="window.location='/top100-report'">Baixar relatorio Top 100</button>
   </div>
   <section class="games" id="games"></section>
   <pre id="output">Pronto.</pre>
@@ -321,6 +325,62 @@ def _html_page() -> str:
         ]) + '</section>' +
       '</section>';
     }
+    function renderTop100(data) {
+      const rows = Array.isArray(data.games) ? data.games : [];
+      if (!rows.length) {
+        return '';
+      }
+      return '<section class="calibration-panel">' +
+        '<div class="game-head"><h2>Ranking Top 100 / Top 50</h2><span class="tag">' + escapeHtml(data.metodo || 'top100') + '</span></div>' +
+        '<div class="status-grid">' +
+          statusCard('Concurso alvo', data.concurso_alvo || '-') +
+          statusCard('Data concurso', data.data_proximo_concurso || '-') +
+          statusCard('Jogos gerados', data.selected_rows || rows.length) +
+          statusCard('Pool analisado', data.top_pool || '-') +
+        '</div>' +
+        '<section class="comparison"><h2>Top 10</h2>' + tableRows(rows.slice(0, 10), [
+          {key: 'rank_top100', label: 'Rank'},
+          {key: 'nums', label: 'Jogo'},
+          {key: 'grupo_top', label: 'Grupo'},
+          {key: 'score_top100', label: 'Score Top 100'},
+          {key: 'score_final', label: 'Score base'},
+          {key: 'score_combinatorio_avancado', label: 'Comb. avançado'},
+          {key: 'score_grafo_dezenas', label: 'Grafo'},
+          {key: 'score_complemento_ausentes', label: 'Complemento'},
+          {key: 'score_detector_falso_positivo', label: 'Anti falso positivo'}
+        ]) + '</section>' +
+        '<section class="comparison"><h2>Top 50 primeiros registros</h2>' + tableRows(rows.slice(0, 50), [
+          {key: 'rank_top100', label: 'Rank'},
+          {key: 'nums', label: 'Jogo'},
+          {key: 'score_top100', label: 'Score Top 100'},
+          {key: 'criterio_top100', label: 'Critério'}
+        ]) + '</section>' +
+      '</section>';
+    }
+    function renderTop100Backtest(data) {
+      const rows = Array.isArray(data.results) ? data.results : [];
+      const summary = data.summary || {};
+      return '<section class="calibration-panel">' +
+        '<div class="game-head"><h2>Backtest Top 100 / Top 50</h2><span class="tag">walk-forward</span></div>' +
+        '<div class="status-grid">' +
+          statusCard('Concursos avaliados', summary.concursos_avaliados || data.concursos_avaliados || '-') +
+          statusCard('Hits Top 10', summary.hit_top10 ?? data.hit_top10 ?? '-') +
+          statusCard('Hits Top 50', summary.hit_top50 ?? data.hit_top50 ?? '-') +
+          statusCard('Hits Top 100', summary.hit_top100 ?? data.hit_top100 ?? '-') +
+          statusCard('Taxa Top 50', summary.taxa_top50 !== undefined ? Number(summary.taxa_top50).toFixed(2) + '%' : '-') +
+          statusCard('Taxa Top 100', summary.taxa_top100 !== undefined ? Number(summary.taxa_top100).toFixed(2) + '%' : '-') +
+          statusCard('Rank diagnóstico médio', summary.rank_diagnostico_medio || data.rank_diagnostico_medio || '-') +
+        '</div>' +
+        '<section class="comparison"><h2>Últimos resultados avaliados</h2>' + tableRows(rows.slice(-20), [
+          {key: 'concurso', label: 'Concurso'},
+          {key: 'jogo_real', label: 'Jogo real'},
+          {key: 'hit_top10', label: 'Top 10'},
+          {key: 'hit_top50', label: 'Top 50'},
+          {key: 'hit_top100', label: 'Top 100'},
+          {key: 'rank_diagnostico_com_gabarito', label: 'Rank diagnóstico'}
+        ]) + '</section>' +
+      '</section>';
+    }
     async function request(path, options) {
       const output = document.getElementById('output');
       output.textContent = 'Processando...';
@@ -370,6 +430,14 @@ def _html_page() -> str:
       } else {
         games.innerHTML = '';
       }
+    }
+    async function top100() {
+      const data = await request('/api/top100', {method: 'POST'});
+      document.getElementById('games').innerHTML = renderTop100(data);
+    }
+    async function top100Backtest() {
+      const data = await request('/api/top100-backtest', {method: 'POST'});
+      document.getElementById('games').innerHTML = renderTop100Backtest(data);
     }
   </script>
 </body>
@@ -487,6 +555,19 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if self.path == "/top100-report":
+                report_path = config.top100_prediction_report_path
+                if not report_path.exists():
+                    _json_response(self, HTTPStatus.NOT_FOUND, {"error": "relatorio ainda nao gerado; use Gerar Top 100 primeiro"})
+                    return
+                body = report_path.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="lotofacil_prediction_top100_report.md"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})
 
         def do_POST(self) -> None:
@@ -552,6 +633,41 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                     return payload
 
                 self._handle_json(predict_single_payload)
+                return
+            if self.path == "/api/top100":
+                def top100_payload() -> dict:
+                    summary = Top100Pipeline(config=config, logger=logger).predict(
+                        top_count=100,
+                        top_pool=10000,
+                        max_overlap=13,
+                        draw_hour=20,
+                        draw_minute=0,
+                        exhaustive_limit=None,
+                    )
+                    payload = summary.__dict__.copy()
+                    payload["games"] = _read_csv_records(config.top100_prediction_csv_path)
+                    return payload
+
+                self._handle_json(top100_payload)
+                return
+            if self.path == "/api/top100-backtest":
+                def top100_backtest_payload() -> dict:
+                    summary = Top100Pipeline(config=config, logger=logger).backtest(
+                        n_eval=5,
+                        min_history=300,
+                        top_count=100,
+                        top_pool=2000,
+                        max_overlap=13,
+                        draw_hour=20,
+                        draw_minute=0,
+                        exhaustive_limit=50000,
+                    )
+                    payload = summary.__dict__.copy()
+                    payload["results"] = _read_csv_records(config.top100_backtest_csv_path)
+                    payload["summary"] = summary.__dict__.copy()
+                    return payload
+
+                self._handle_json(top100_backtest_payload)
                 return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})
 

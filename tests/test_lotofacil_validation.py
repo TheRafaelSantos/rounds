@@ -40,6 +40,7 @@ from lotofacil_analytics.predictor import select_final_games
 from lotofacil_analytics.selection_guard import build_number_guard_table, enrich_candidates_with_decision_guard
 from lotofacil_analytics.supervised_calibration import load_supervised_calibration_status, run_supervised_calibration
 from lotofacil_analytics.temporal_deep import build_temporal_deep_rows, temporal_deep_number_scores
+from lotofacil_analytics.top100_engine import build_top100_prediction, run_top100_backtest
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.transition_analysis import build_transition_model, build_transition_outputs, score_transition_candidate
 from lotofacil_analytics.validators import DataValidationError, validate_contest_record, validate_dataset
@@ -854,6 +855,61 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertEqual(status["state"]["status"], "complete")
             self.assertAlmostEqual(sum(float(v) for v in status["engine_weights"].values()), 1.0, places=5)
 
+    def test_top100_prediction_and_backtest_write_outputs(self) -> None:
+        rows = []
+        for idx in range(1, 18):
+            payload = payload_with_dezenas(idx, cyclic_dezenas(idx))
+            payload["nomeMunicipioUFSorteio"] = "SAO PAULO, SP"
+            payload["localSorteio"] = "ESPAÇO DA SORTE"
+            rows.append(normalize_contest(payload))
+        concursos = pd.DataFrame(rows)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            summary = build_top100_prediction(
+                concursos,
+                existing_candidates=pd.DataFrame(),
+                top_count=5,
+                top_pool=20,
+                max_overlap=14,
+                draw_hour=20,
+                draw_minute=0,
+                exhaustive_limit=300,
+                climate_features=pd.DataFrame(),
+                target_climate=None,
+                weights=None,
+                prediction_csv_path=base / "top100.csv",
+                report_path=base / "top100.md",
+                excel_path=base / "top100.xlsx",
+            )
+            self.assertEqual(summary.selected_rows, 5)
+            saved = pd.read_csv(base / "top100.csv")
+            self.assertIn("score_top100", saved.columns)
+            self.assertIn("score_combinatorio_avancado", saved.columns)
+            self.assertTrue((base / "top100.md").exists())
+            self.assertTrue((base / "top100.xlsx").exists())
+
+            backtest = run_top100_backtest(
+                concursos,
+                climate_features=pd.DataFrame(),
+                n_eval=1,
+                min_history=10,
+                top_count=5,
+                top_pool=20,
+                max_overlap=14,
+                draw_hour=20,
+                draw_minute=0,
+                exhaustive_limit=300,
+                weights=None,
+                results_csv_path=base / "bt.csv",
+                summary_csv_path=base / "bt_summary.csv",
+                excel_path=base / "bt.xlsx",
+            )
+            self.assertEqual(backtest.concursos_avaliados, 1)
+            self.assertTrue((base / "bt.csv").exists())
+            self.assertTrue((base / "bt_summary.csv").exists())
+            self.assertTrue((base / "bt.xlsx").exists())
+
     def test_web_interface_html_contains_expected_controls(self) -> None:
         html = _html_page()
         self.assertIn("Lotofacil Analytics", html)
@@ -865,8 +921,11 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("/api/predict", html)
         self.assertIn("/api/predict-single", html)
         self.assertIn("/api/mandel", html)
+        self.assertIn("/api/top100", html)
+        self.assertIn("/api/top100-backtest", html)
         self.assertIn("/report", html)
         self.assertIn("/mandel-report", html)
+        self.assertIn("/top100-report", html)
         self.assertIn("Comparação visual dos scores", html)
         self.assertIn("Score climático", html)
         self.assertIn("Temporal profundo", html)
@@ -878,6 +937,8 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("Progresso elegível", html)
         self.assertIn("Evolução por blocos de concursos", html)
         self.assertIn("Melhores posicionamentos aprendidos", html)
+        self.assertIn("Gerar Top 100", html)
+        self.assertIn("Backtest Top 100", html)
 
     def test_generate_games_balanceado_returns_requested_quantity(self) -> None:
         rows = []

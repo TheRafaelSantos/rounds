@@ -353,3 +353,27 @@ class AppConfig:
     @property
     def supervised_calibration_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_supervised_calibration.xlsx"
+
+    @property
+    def top100_prediction_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_prediction_top100.csv"
+
+    @property
+    def top100_prediction_report_path(self) -> Path:
+        return self.exports_dir / "lotofacil_prediction_top100_report.md"
+
+    @property
+    def top100_prediction_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_prediction_top100.xlsx"
+
+    @property
+    def top100_backtest_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_backtest_top100.csv"
+
+    @property
+    def top100_backtest_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_backtest_top100_summary.csv"
+
+    @property
+    def top100_backtest_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_backtest_top100.xlsx"

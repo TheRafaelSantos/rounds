@@ -34,6 +34,7 @@ from lotofacil_analytics.post_result_analysis import analyze_post_result
 from lotofacil_analytics.predictor_pipeline import PredictorPipeline
 from lotofacil_analytics.interface_web import run_web_server
 from lotofacil_analytics.supervised_calibration_pipeline import SupervisedCalibrationPipeline
+from lotofacil_analytics.top100_pipeline import Top100Pipeline
 from lotofacil_analytics.transition_pipeline import TransitionPipeline
 from lotofacil_analytics.temporal_deep_pipeline import TemporalDeepPipeline
 
@@ -77,6 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--tune-weights", action="store_true", help="Testa perfis de pesos e salva o melhor perfil observado.")
     mode.add_argument("--calibrate-engine", action="store_true", help="Calibra pesos do motor por walk-forward contra concursos passados.")
     mode.add_argument("--supervised-calibration", action="store_true", help="Roda aprendizado supervisionado com gabarito historico e aplica pesos medios ao motor.")
+    mode.add_argument("--top100", action="store_true", help="Gera ranking Top 100 / Top 50 com estudos avancados.")
+    mode.add_argument("--top100-backtest", action="store_true", help="Valida historicamente o ranking Top 100 / Top 50.")
     mode.add_argument("--analyze-result", action="store_true", help="Analisa resultado real contra os jogos previstos.")
     mode.add_argument("--final-backtest", action="store_true", help="Executa backtest do score final completo contra aleatorio.")
     mode.add_argument("--export", action="store_true", help="Gera Excel consolidado com as abas do briefing.")
@@ -139,6 +142,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--final-candidate-pool", type=int, default=2500, help="Candidatos por concurso no --final-backtest.")
     parser.add_argument("--final-generations", type=int, default=6, help="Geracoes por concurso no --final-backtest.")
     parser.add_argument("--final-population", type=int, default=40, help="Populacao por concurso no --final-backtest.")
+    parser.add_argument("--top100-count", type=int, default=100, help="Quantidade de jogos no ranking --top100.")
+    parser.add_argument("--top100-pool", type=int, default=10000, help="Quantidade de candidatos fortes reordenados pelo --top100.")
+    parser.add_argument("--top100-max-overlap", type=int, default=13, help="Overlap maximo inicial entre jogos do portfolio Top 100.")
+    parser.add_argument("--top100-n-eval", type=int, default=20, help="Concursos finais avaliados no --top100-backtest.")
+    parser.add_argument("--top100-exhaustive-limit", type=int, default=0, help="Limite tecnico de combinacoes no Top 100; 0 avalia todas.")
     parser.add_argument("--host", default="127.0.0.1", help="Host da interface web local.")
     parser.add_argument("--port", type=int, default=8765, help="Porta da interface web local.")
     return parser
@@ -178,6 +186,8 @@ def main() -> int:
         or args.tune_weights
         or args.calibrate_engine
         or args.supervised_calibration
+        or args.top100
+        or args.top100_backtest
         or args.analyze_result
         or args.final_backtest
         or args.export
@@ -346,6 +356,26 @@ def main() -> int:
                 draw_minute=args.draw_minute,
                 min_history=args.supervised_min_history,
                 reset=args.supervised_reset,
+            )
+        elif args.top100:
+            summary = Top100Pipeline(config=config, logger=logger).predict(
+                top_count=args.top100_count,
+                top_pool=args.top100_pool,
+                max_overlap=args.top100_max_overlap,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+                exhaustive_limit=args.top100_exhaustive_limit if int(args.top100_exhaustive_limit) > 0 else None,
+            )
+        elif args.top100_backtest:
+            summary = Top100Pipeline(config=config, logger=logger).backtest(
+                n_eval=args.top100_n_eval,
+                min_history=args.min_history,
+                top_count=args.top100_count,
+                top_pool=args.top100_pool,
+                max_overlap=args.top100_max_overlap,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+                exhaustive_limit=args.top100_exhaustive_limit if int(args.top100_exhaustive_limit) > 0 else None,
             )
         elif args.predict:
             if args.mode == "completo":

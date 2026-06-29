@@ -174,6 +174,39 @@ Arquivos principais:
 
 Na interface web, clique em **Aprendizado supervisionado** para acompanhar status, progresso no historico elegivel, pesos atuais, ranking antes/depois, melhores posicionamentos, evolucao por blocos e ultimos concursos aprendidos.
 
+Gerar ranking Top 100 / Top 50:
+
+```powershell
+python main.py --top100 --top100-count 100 --top100-pool 10000 --top100-max-overlap 13 --draw-hour 20 --draw-minute 0
+```
+
+Esse comando cria uma camada superior sobre o motor exaustivo e os pesos supervisionados. Ele reordena candidatos fortes com estudos adicionais:
+
+1. objetivo Top 100 / Top 50 / Top 10;
+2. hard negatives, usando candidatos fortes como adversarios;
+3. atraso e frequencia de pares, trios e quartetos;
+4. grafo de dezenas por densidade e centralidade;
+5. complemento das 10 dezenas ausentes;
+6. geometria do volante 5x5;
+7. residuos matematicos mod 3, mod 4, mod 5 e finais;
+8. regimes historicos recentes e longos;
+9. detector de falso positivo;
+10. score interno de ranking para reordenar os candidatos.
+
+Arquivos gerados:
+
+1. `data/processed/lotofacil_prediction_top100.csv`;
+2. `data/exports/lotofacil_prediction_top100.xlsx`;
+3. `data/exports/lotofacil_prediction_top100_report.md`.
+
+Validar historicamente o Top 100 / Top 50:
+
+```powershell
+python main.py --top100-backtest --top100-n-eval 20 --top100-count 100 --top100-pool 2000 --top100-exhaustive-limit 50000 --min-history 300 --draw-hour 20 --draw-minute 0
+```
+
+O backtest mede `hit_top10`, `hit_top50`, `hit_top100` e tambem o `rank_diagnostico_com_gabarito`. O hit Top N mostra se o jogo real apareceu no ranking gerado sem informar o resultado. O rank diagnostico injeta o gabarito apenas para medir se o score teria capacidade de posicionar a sequencia real entre os candidatos fortes.
+
 Gerar combinacoes e assinaturas:
 
 ```powershell
