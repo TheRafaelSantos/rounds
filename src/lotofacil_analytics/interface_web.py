@@ -10,7 +10,6 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from .calibration_lab import load_calibration_lab_status
 from .climate_pipeline import ClimatePipeline
 from .config import AppConfig
 from .decision_layer_pipeline import DecisionLayerPipeline
@@ -93,7 +92,6 @@ def _html_page() -> str:
     <button onclick="predictSingle()">Gerar jogo unico</button>
     <button onclick="predict()">Gerar 2 jogos</button>
     <button onclick="mandel()">Plano Mandel/bolão</button>
-    <button onclick="calibrationStatus()">Calibração 24/7</button>
     <button onclick="supervisedStatus()">Aprendizado supervisionado</button>
     <button onclick="window.location='/report'">Baixar relatorio</button>
     <button onclick="window.location='/single-report'">Baixar relatorio jogo unico</button>
@@ -258,60 +256,6 @@ def _html_page() -> str:
       }).join('');
       return '<div class="table-scroll"><table><thead><tr>' + header + '</tr></thead><tbody>' + body + '</tbody></table></div>';
     }
-    function renderCalibration(data) {
-      const state = data.state || {};
-      const recent = data.recent_attempts || [];
-      const winners = data.winners || [];
-      const elites = data.elites || [];
-      const weights = data.average_weights || [];
-      return '<section class="calibration-panel">' +
-        '<div class="game-head"><h2>Calibração 24/7</h2><span class="tag">' + escapeHtml(state.status || 'sem status') + '</span></div>' +
-        '<div class="status-grid">' +
-          statusCard('Concurso atual', state.current_concurso) +
-          statusCard('Tentativa atual', state.current_attempt) +
-          statusCard('Melhor acerto atual', state.best_hits_current) +
-          statusCard('Concursos resolvidos', state.solved_count) +
-          statusCard('Tentativas totais', state.total_attempts) +
-          statusCard('Tempo desta execução', state.elapsed_seconds_current_run ? Number(state.elapsed_seconds_current_run).toFixed(0) + 's' : '-') +
-          statusCard('Cache atual', state.current_cache_status || state.last_cache_status || '-') +
-          statusCard('Cache última tentativa', state.last_cache_status || '-') +
-          statusCard('Combinações no cache', state.last_cache_rows || '-') +
-          statusCard('Estratégia atual', state.current_weight_strategy || state.last_weight_strategy || '-') +
-          statusCard('Elites 11+', state.elite_count_current || 0) +
-          statusCard('Melhor elite', state.elite_best_hits_current || 0) +
-          statusCard('Fonte elite', state.current_elite_source_hits || state.last_elite_source_hits || '-') +
-          statusCard('Repetição J1/J2', (state.last_repeat_count_jogo_1 ?? '-') + ' / ' + (state.last_repeat_count_jogo_2 ?? '-')) +
-          statusCard('Overlap recente', (state.last_recent_overlap_jogo_1 ?? '-') + ' / ' + (state.last_recent_overlap_jogo_2 ?? '-')) +
-        '</div>' +
-        '<div class="exclusives"><strong>Melhor jogo atual:</strong> ' + escapeHtml(state.best_game_current || '-') + '</div>' +
-        '<section class="comparison"><h2>Média atual dos pesos vencedores</h2>' + weightRows(weights) + '</section>' +
-        '<section class="comparison"><h2>Elites 11+ salvas</h2>' + tableRows(elites, [
-          {key: 'target_concurso', label: 'Concurso'},
-          {key: 'tentativa', label: 'Tentativa'},
-          {key: 'melhor_acerto', label: 'Melhor'},
-          {key: 'weight_strategy', label: 'Estratégia'},
-          {key: 'elite_source_hits', label: 'Fonte'},
-          {key: 'melhor_jogo', label: 'Melhor jogo'}
-        ]) + '</section>' +
-        '<section class="comparison"><h2>Últimas tentativas</h2>' + tableRows(recent, [
-          {key: 'target_concurso', label: 'Concurso'},
-          {key: 'tentativa', label: 'Tentativa'},
-          {key: 'melhor_acerto', label: 'Melhor'},
-          {key: 'jogo_1', label: 'Jogo 1'},
-          {key: 'acertos_jogo_1', label: 'Acertos J1'},
-          {key: 'repeat_count_jogo_1', label: 'Rep J1'},
-          {key: 'jogo_2', label: 'Jogo 2'},
-          {key: 'acertos_jogo_2', label: 'Acertos J2'},
-          {key: 'repeat_count_jogo_2', label: 'Rep J2'}
-        ]) + '</section>' +
-        '<section class="comparison"><h2>Concursos resolvidos com 15</h2>' + tableRows(winners, [
-          {key: 'target_concurso', label: 'Concurso'},
-          {key: 'tentativa', label: 'Tentativa'},
-          {key: 'melhor_jogo', label: 'Jogo vencedor'},
-          {key: 'solved_at', label: 'Resolvido em'}
-        ]) + '</section>' +
-      '</section>';
-    }
     function renderSupervised(data) {
       const state = data.state || {};
       const recent = data.recent_results || [];
@@ -359,10 +303,6 @@ def _html_page() -> str:
       return data;
     }
     async function status() { await request('/api/status'); }
-    async function calibrationStatus() {
-      const data = await request('/api/calibration/status');
-      document.getElementById('games').innerHTML = renderCalibration(data);
-    }
     async function supervisedStatus() {
       const data = await request('/api/supervised/status');
       document.getElementById('games').innerHTML = renderSupervised(data);
@@ -470,18 +410,6 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
             if self.path == "/api/status":
                 self._handle_json(lambda: LotofacilPipeline(config=config, logger=logger).status().__dict__)
                 return
-            if self.path == "/api/calibration/status":
-                self._handle_json(
-                    lambda: load_calibration_lab_status(
-                        state_json_path=config.calibration_lab_state_json_path,
-                        attempts_csv_path=config.calibration_lab_attempts_csv_path,
-                        winners_csv_path=config.calibration_lab_winners_csv_path,
-                        elites_csv_path=config.calibration_lab_elites_csv_path,
-                        average_weights_csv_path=config.calibration_lab_average_weights_csv_path,
-                        engine_weights_json_path=config.engine_calibration_weights_json_path,
-                    )
-                )
-                return
             if self.path == "/api/supervised/status":
                 self._handle_json(
                     lambda: load_supervised_calibration_status(
@@ -489,7 +417,7 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                         results_csv_path=config.supervised_calibration_results_csv_path,
                         summary_csv_path=config.supervised_calibration_summary_csv_path,
                         weights_csv_path=config.supervised_calibration_weights_csv_path,
-                        weights_json_path=config.engine_calibration_weights_json_path,
+                        weights_json_path=config.supervised_calibration_weights_json_path,
                     )
                 )
                 return

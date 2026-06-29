@@ -4,7 +4,7 @@ import logging
 
 import pandas as pd
 
-from .calibrated_weights import load_calibrated_weights
+from .calibrated_weights import load_supervised_calibrated_weights
 from .climate_runtime import load_runtime_climate
 from .config import AppConfig
 from .context_features import build_target_context
@@ -56,7 +56,10 @@ class MandelPipeline:
             top_games=5000,
             draw_hour=draw_hour,
             draw_minute=draw_minute,
-            weights=load_calibrated_weights(self.config.engine_calibration_weights_json_path),
+            weights=load_supervised_calibrated_weights(
+                self.config.supervised_calibration_weights_json_path,
+                fallback_path=self.config.engine_calibration_weights_json_path,
+            ),
             climate_features=climate_features,
             target_climate=target_climate,
         )

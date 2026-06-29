@@ -521,6 +521,7 @@ def build_exhaustive_candidates(
 
     candidates = _ranked_heap_rows(heap)
     if not candidates.empty:
+        candidates["score_weights"] = format_exhaustive_weights(resolved_weights)
         candidates["total_combinacoes_avaliadas"] = int(evaluated)
         detail_rows = []
         for _, row in candidates.iterrows():

@@ -10,16 +10,7 @@ import pandas as pd
 
 from lotofacil_analytics.auditoria import build_auditoria
 from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
-from lotofacil_analytics.calibration_lab import (
-    WEIGHT_COMPONENTS,
-    _append_csv,
-    _apply_calibration_novelty,
-    _read_csv,
-    _sync_elites_from_attempts,
-    _weights_for_attempt,
-    load_calibration_lab_status,
-    run_calibration_lab,
-)
+from lotofacil_analytics.calibrated_weights import load_supervised_calibrated_weights
 from lotofacil_analytics.calibration_pilot import run_calibration_pilot
 from lotofacil_analytics.climate_pipeline import ClimatePipeline
 from lotofacil_analytics.combinacoes import build_combinacoes_features, build_combinacoes_outputs
@@ -525,263 +516,6 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertTrue(paths["state_json_path"].exists())
             self.assertTrue(paths["excel_path"].exists())
 
-    def test_calibration_lab_writes_resumable_status(self) -> None:
-        rows = []
-        for idx in range(1, 18):
-            rows.append(normalize_contest(payload_with_dezenas(idx, cyclic_dezenas(idx))))
-        concursos = pd.DataFrame(rows)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            paths = {
-                "state_json_path": base / "lab_state.json",
-                "attempts_csv_path": base / "lab_attempts.csv",
-                "winners_csv_path": base / "lab_winners.csv",
-                "elites_csv_path": base / "lab_elites.csv",
-                "summary_csv_path": base / "lab_summary.csv",
-                "average_weights_csv_path": base / "lab_average_weights.csv",
-                "excel_path": base / "lab.xlsx",
-                "engine_weights_json_path": base / "engine_weights.json",
-                "cache_dir": base / "lab_cache",
-            }
-            summary = run_calibration_lab(
-                concursos,
-                climate_features=pd.DataFrame(),
-                from_concurso=14,
-                to_concurso=14,
-                max_attempts=2,
-                top_games=12,
-                exhaustive_limit=220,
-                max_overlap=14,
-                seed=123,
-                draw_hour=20,
-                draw_minute=0,
-                min_history=10,
-                max_runtime_seconds=0,
-                reset=True,
-                **paths,
-            )
-            status = load_calibration_lab_status(
-                state_json_path=paths["state_json_path"],
-                attempts_csv_path=paths["attempts_csv_path"],
-                winners_csv_path=paths["winners_csv_path"],
-                elites_csv_path=paths["elites_csv_path"],
-                average_weights_csv_path=paths["average_weights_csv_path"],
-                engine_weights_json_path=paths["engine_weights_json_path"],
-            )
-
-            attempts = pd.read_csv(paths["attempts_csv_path"])
-            self.assertEqual(summary.attempts_this_run, 2)
-            self.assertEqual(len(attempts), 2)
-            self.assertEqual(attempts.loc[0, "cache_status"], "built")
-            self.assertEqual(attempts.loc[1, "cache_status"], "hit")
-            self.assertIn("status", status["state"])
-            self.assertEqual(len(status["recent_attempts"]), 2)
-            self.assertTrue(paths["state_json_path"].exists())
-            self.assertTrue(paths["summary_csv_path"].exists())
-            self.assertTrue(paths["average_weights_csv_path"].exists())
-            self.assertTrue((paths["cache_dir"] / "concurso_14" / "scores.npy").exists())
-
-    def test_calibration_lab_saves_elites_from_11_to_15_hits(self) -> None:
-        weights = resolve_exhaustive_weights({component: 1.0 for component in WEIGHT_COMPONENTS})
-        rows = []
-        for attempt, hits in enumerate([10, 11, 12, 13, 14, 15], start=1):
-            row = {
-                "target_concurso": 2500,
-                "tentativa": attempt,
-                "melhor_acerto": hits,
-                "melhor_jogo": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15",
-                "jogo_1": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15",
-                "acertos_jogo_1": hits,
-                "jogo_2": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 16",
-                "acertos_jogo_2": max(0, hits - 1),
-                "weight_strategy": "test",
-                "score_weights": "test",
-            }
-            for component, value in weights.items():
-                row[f"peso_{component}"] = value
-            rows.append(row)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            elites = _sync_elites_from_attempts(
-                attempts=pd.DataFrame(rows),
-                elites_csv_path=Path(tmp) / "lab_elites.csv",
-            )
-
-            self.assertEqual(elites["melhor_acerto"].astype(int).tolist(), [15, 14, 13, 12, 11])
-            self.assertNotIn(10, elites["melhor_acerto"].astype(int).tolist())
-
-    def test_calibration_lab_uses_elite_weights_as_anchor(self) -> None:
-        weights = resolve_exhaustive_weights({component: index + 1 for index, component in enumerate(WEIGHT_COMPONENTS)})
-        row = {
-            "target_concurso": 2500,
-            "tentativa": 7,
-            "melhor_acerto": 12,
-            "melhor_jogo": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15",
-            "weight_strategy": "test",
-        }
-        for component, value in weights.items():
-            row[f"peso_{component}"] = value
-
-        with tempfile.TemporaryDirectory() as tmp:
-            elites = _sync_elites_from_attempts(
-                attempts=pd.DataFrame([row]),
-                elites_csv_path=Path(tmp) / "lab_elites.csv",
-            )
-            selected_weights = {}
-            meta = {}
-            for seed in range(50):
-                selected_weights, meta = _weights_for_attempt(
-                    target_concurso=2500,
-                    attempt=20,
-                    seed=seed,
-                    average_winner_weights=None,
-                    best_current_weights=None,
-                    elite_rows=elites,
-                )
-                if str(meta.get("weight_strategy", "")).startswith("elite_"):
-                    break
-
-            self.assertTrue(str(meta.get("weight_strategy", "")).startswith("elite_"))
-            self.assertEqual(str(meta.get("elite_source_hits", "")), "12")
-            self.assertAlmostEqual(sum(selected_weights.values()), 1.0, places=6)
-
-    def test_calibration_lab_penalizes_repeated_games(self) -> None:
-        repeated = "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15"
-        fresh = "01 02 03 04 05 06 07 08 09 16 17 18 19 20 21"
-        alternate = "01 02 03 04 05 06 07 08 10 16 17 18 19 20 22"
-        attempts = pd.DataFrame(
-            [
-                {"target_concurso": 2500, "jogo_1": repeated, "jogo_2": alternate},
-                {"target_concurso": 2500, "jogo_1": repeated, "jogo_2": alternate},
-                {"target_concurso": 2500, "jogo_1": repeated, "jogo_2": alternate},
-            ]
-        )
-        candidates = pd.DataFrame(
-            [
-                {"nums": repeated, "score_final": 99.0, "score_transicao": 99.0, "score_contextual": 99.0},
-                {"nums": fresh, "score_final": 97.0, "score_transicao": 97.0, "score_contextual": 97.0},
-                {"nums": alternate, "score_final": 96.0, "score_transicao": 96.0, "score_contextual": 96.0},
-            ]
-        )
-
-        penalized = _apply_calibration_novelty(candidates, attempts=attempts, target_concurso=2500)
-        repeated_row = penalized.loc[penalized["nums"] == repeated].iloc[0]
-        fresh_row = penalized.loc[penalized["nums"] == fresh].iloc[0]
-        final_games = select_final_games(penalized, max_overlap=10)
-
-        self.assertGreater(int(repeated_row["calibration_repeat_count"]), 0)
-        self.assertLess(float(repeated_row["score_final"]), float(fresh_row["score_final"]))
-        self.assertNotEqual(final_games.loc[0, "nums"], repeated)
-
-    def test_calibration_lab_attempt_csv_evolves_cache_columns(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "attempts.csv"
-            old_row = {
-                "target_concurso": 2500,
-                "tentativa": 1,
-                "score_jogo_1": 90.0,
-                "score_jogo_2": 88.0,
-                "score_weights": "estatistico=1.0000",
-                "peso_estatistico": 1.0,
-            }
-            new_row = {
-                **old_row,
-                "tentativa": 2,
-                "cache_status": "hit",
-                "cache_rows": 100,
-                "cache_path": "cache/concurso_2500",
-            }
-
-            _append_csv(path, old_row)
-            _append_csv(path, new_row)
-            migrated = _read_csv(path)
-
-            self.assertEqual(len(migrated), 2)
-            self.assertIn("cache_status", migrated.columns)
-            self.assertEqual(str(migrated.loc[1, "cache_status"]), "hit")
-            self.assertEqual(str(migrated.loc[1, "score_weights"]), "estatistico=1.0000")
-
-    def test_calibration_lab_append_preserves_existing_column_order(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "attempts.csv"
-            first = {
-                "target_concurso": 2500,
-                "score_weights": "estatistico=1.0000",
-                "peso_estatistico": 1.0,
-                "weight_strategy": "preset",
-            }
-            second = {
-                "target_concurso": 2500,
-                "weight_strategy": "elite_mutation",
-                "score_weights": "estatistico=0.5000",
-                "peso_estatistico": 0.5,
-            }
-
-            _append_csv(path, first)
-            _append_csv(path, second)
-            rows = path.read_text(encoding="utf-8-sig").splitlines()
-
-            self.assertEqual(rows[0].split(","), ["target_concurso", "score_weights", "peso_estatistico", "weight_strategy"])
-            self.assertEqual(rows[2].split(","), ["2500", "estatistico=0.5000", "0.5", "elite_mutation"])
-
-    def test_calibration_lab_read_csv_repairs_misaligned_weight_columns(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "attempts.csv"
-            header = [
-                "score_weights",
-                "peso_estatistico",
-                "peso_historico",
-                "peso_atraso",
-                "peso_combinatorio",
-                "peso_localidade_numerologia",
-                "peso_climatico",
-                "peso_temporal_profundo",
-                "peso_cenarios",
-                "peso_contrarian",
-                "peso_transicao",
-                "peso_nao_repeticao_exata",
-                "weight_strategy",
-                "elite_source_attempts",
-                "elite_source_hits",
-            ]
-            misaligned = [
-                "elite_crossover",
-                "101|202",
-                "12|11",
-                "estatistico=0.1;historico=0.2",
-                "0.1",
-                "0.2",
-                "0.3",
-                "0.4",
-                "0.5",
-                "0.6",
-                "0.7",
-                "0.8",
-                "0.9",
-                "0.10",
-                "0.11",
-            ]
-            path.write_text(",".join(header) + "\n" + ",".join(misaligned) + "\n", encoding="utf-8")
-
-            repaired = _read_csv(path)
-
-            self.assertEqual(str(repaired.loc[0, "weight_strategy"]), "elite_crossover")
-            self.assertEqual(str(repaired.loc[0, "elite_source_attempts"]), "101|202")
-            self.assertEqual(str(repaired.loc[0, "elite_source_hits"]), "12|11")
-            self.assertEqual(str(repaired.loc[0, "score_weights"]), "estatistico=0.1;historico=0.2")
-            self.assertEqual(float(repaired.loc[0, "peso_estatistico"]), 0.1)
-            self.assertEqual(float(repaired.loc[0, "peso_nao_repeticao_exata"]), 0.11)
-
-    def test_calibration_lab_read_csv_tolerates_empty_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "empty.csv"
-            path.write_text("", encoding="utf-8")
-
-            df = _read_csv(path)
-
-            self.assertTrue(df.empty)
-
     def test_transition_outputs_compare_consecutive_draws(self) -> None:
         rows = []
         for idx in range(1, 6):
@@ -806,6 +540,25 @@ class LotofacilValidationTest(unittest.TestCase):
 
         self.assertAlmostEqual(sum(weights.values()), 1.0, places=6)
         self.assertGreater(weights["estatistico"], weights["historico"])
+
+    def test_supervised_weight_loader_ignores_non_supervised_models(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            old_path = base / "old_weights.json"
+            supervised_path = base / "supervised_weights.json"
+            old_path.write_text(
+                '{"model":"calibration_lab_winners_average_v1","weights":{"estatistico":1.0}}',
+                encoding="utf-8",
+            )
+            supervised_path.write_text(
+                '{"model":"supervised_answer_key_calibration_v1","weights":{"estatistico":0.7,"historico":0.3}}',
+                encoding="utf-8",
+            )
+
+            self.assertIsNone(load_supervised_calibrated_weights(old_path))
+            weights = load_supervised_calibrated_weights(supervised_path, fallback_path=old_path)
+
+            self.assertEqual(weights, {"estatistico": 0.7, "historico": 0.3})
 
     def test_decision_layer_generates_single_prediction(self) -> None:
         rows = []
@@ -1060,7 +813,7 @@ class LotofacilValidationTest(unittest.TestCase):
         html = _html_page()
         self.assertIn("Lotofacil Analytics", html)
         self.assertIn("/api/status", html)
-        self.assertIn("/api/calibration/status", html)
+        self.assertNotIn("/api/calibration/status", html)
         self.assertIn("/api/supervised/status", html)
         self.assertIn("/api/transitions", html)
         self.assertIn("/api/climate", html)
@@ -1075,7 +828,7 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("score_portfolio_jogo_2", html)
         self.assertIn("Decisão protegida", html)
         self.assertIn("Anti-falso-negativo", html)
-        self.assertIn("Calibração 24/7", html)
+        self.assertNotIn("Calibração 24/7", html)
         self.assertIn("Aprendizado supervisionado", html)
 
     def test_generate_games_balanceado_returns_requested_quantity(self) -> None:

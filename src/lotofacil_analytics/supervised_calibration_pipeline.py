@@ -47,7 +47,7 @@ class SupervisedCalibrationPipeline:
             summary_csv_path=self.config.supervised_calibration_summary_csv_path,
             weights_csv_path=self.config.supervised_calibration_weights_csv_path,
             excel_path=self.config.supervised_calibration_excel_path,
-            weights_json_path=self.config.engine_calibration_weights_json_path,
+            weights_json_path=self.config.supervised_calibration_weights_json_path,
         )
         self.logger.info(
             "Calibracao supervisionada salva em %s",

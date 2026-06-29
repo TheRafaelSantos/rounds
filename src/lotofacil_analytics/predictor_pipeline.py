@@ -4,7 +4,7 @@ import logging
 
 import pandas as pd
 
-from .calibrated_weights import load_calibrated_weights
+from .calibrated_weights import load_supervised_calibrated_weights
 from .climate_runtime import load_runtime_climate
 from .config import AppConfig
 from .predictor import PredictionSummary, build_final_prediction
@@ -59,7 +59,10 @@ class PredictorPipeline:
             exhaustive_limit=exhaustive_limit,
             climate_features=climate_features,
             target_climate=target_climate,
-            weights=load_calibrated_weights(self.config.engine_calibration_weights_json_path),
+            weights=load_supervised_calibrated_weights(
+                self.config.supervised_calibration_weights_json_path,
+                fallback_path=self.config.engine_calibration_weights_json_path,
+            ),
         )
 
         self.logger.info("Predicao final salva em %s", self.config.prediction_csv_path)

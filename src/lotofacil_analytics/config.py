@@ -331,38 +331,6 @@ class AppConfig:
         return self.processed_dir / "lotofacil_tuned_weights.json"
 
     @property
-    def calibration_lab_state_json_path(self) -> Path:
-        return self.processed_dir / "lotofacil_calibration_lab_state.json"
-
-    @property
-    def calibration_lab_attempts_csv_path(self) -> Path:
-        return self.processed_dir / "lotofacil_calibration_lab_attempts.csv"
-
-    @property
-    def calibration_lab_winners_csv_path(self) -> Path:
-        return self.processed_dir / "lotofacil_calibration_lab_winners.csv"
-
-    @property
-    def calibration_lab_elites_csv_path(self) -> Path:
-        return self.processed_dir / "lotofacil_calibration_lab_elites.csv"
-
-    @property
-    def calibration_lab_summary_csv_path(self) -> Path:
-        return self.processed_dir / "lotofacil_calibration_lab_summary.csv"
-
-    @property
-    def calibration_lab_average_weights_csv_path(self) -> Path:
-        return self.processed_dir / "lotofacil_calibration_lab_average_weights.csv"
-
-    @property
-    def calibration_lab_excel_path(self) -> Path:
-        return self.exports_dir / "lotofacil_calibration_lab.xlsx"
-
-    @property
-    def calibration_lab_cache_dir(self) -> Path:
-        return self.processed_dir / "lotofacil_calibration_lab_cache"
-
-    @property
     def supervised_calibration_state_json_path(self) -> Path:
         return self.processed_dir / "lotofacil_supervised_calibration_state.json"
 
@@ -377,6 +345,10 @@ class AppConfig:
     @property
     def supervised_calibration_weights_csv_path(self) -> Path:
         return self.processed_dir / "lotofacil_supervised_calibration_weights.csv"
+
+    @property
+    def supervised_calibration_weights_json_path(self) -> Path:
+        return self.processed_dir / "lotofacil_supervised_calibrated_weights.json"
 
     @property
     def supervised_calibration_excel_path(self) -> Path:

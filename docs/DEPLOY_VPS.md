@@ -9,9 +9,7 @@ O projeto roda em dois containers Docker por padrao:
 
 Os arquivos de progresso ficam no volume `./data`, fora da imagem Docker. Se o container reiniciar, o processo continua do estado salvo.
 
-O aprendizado supervisionado avalia, para cada concurso historico, a sequencia real contra amostras concorrentes. Ele mede quais estudos deixariam o gabarito mais bem posicionado, calcula pesos por concurso e grava a media em `data/processed/lotofacil_engine_calibrated_weights.json`. Esse arquivo e carregado automaticamente pelo motor principal ao gerar novos jogos.
-
-O antigo `lotofacil-calibrator` foi preservado no perfil Docker `legacy`, mas nao sobe por padrao para nao competir por CPU com o aprendizado supervisionado.
+O aprendizado supervisionado avalia, para cada concurso historico, a sequencia real contra amostras concorrentes. Ele mede quais estudos deixariam o gabarito mais bem posicionado, calcula pesos por concurso e grava a media em `data/processed/lotofacil_supervised_calibrated_weights.json`. Esse arquivo e o unico arquivo de pesos carregado pelo motor principal ao gerar novos jogos.
 
 ## Comandos principais na VPS
 
@@ -63,12 +61,6 @@ Reiniciar somente o aprendizado supervisionado:
 docker compose restart lotofacil-supervised
 ```
 
-Rodar o calibrador antigo, se precisar comparar:
-
-```bash
-docker compose --profile legacy up -d lotofacil-calibrator
-```
-
 ## Arquivos importantes
 
 ```text
@@ -76,7 +68,7 @@ docker compose --profile legacy up -d lotofacil-calibrator
 /opt/lotofacil/data/processed/lotofacil_supervised_calibration_results.csv
 /opt/lotofacil/data/processed/lotofacil_supervised_calibration_summary.csv
 /opt/lotofacil/data/processed/lotofacil_supervised_calibration_weights.csv
-/opt/lotofacil/data/processed/lotofacil_engine_calibrated_weights.json
+/opt/lotofacil/data/processed/lotofacil_supervised_calibrated_weights.json
 /opt/lotofacil/data/exports/lotofacil_supervised_calibration.xlsx
 ```
 

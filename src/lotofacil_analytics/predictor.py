@@ -8,7 +8,13 @@ from typing import Dict, List, Mapping, Sequence, Tuple
 import pandas as pd
 
 from .context_features import TargetContext, build_target_context
-from .exhaustive_optimizer import EXHAUSTIVE_SOURCE_MODEL, TOTAL_COMBINATIONS, build_exhaustive_candidates
+from .exhaustive_optimizer import (
+    EXHAUSTIVE_SOURCE_MODEL,
+    TOTAL_COMBINATIONS,
+    build_exhaustive_candidates,
+    format_exhaustive_weights,
+    resolve_exhaustive_weights,
+)
 from .optimizer import build_optimized_candidates
 from .selection_guard import enrich_candidates_with_decision_guard
 
@@ -358,6 +364,10 @@ def build_final_prediction(
             and int(candidate_base_final) == last_concurso
             and candidate_target_date == target_context.data_proximo_concurso
         )
+    expected_score_weights = format_exhaustive_weights(resolve_exhaustive_weights(weights))
+    has_matching_weights = False
+    if existing_candidates is not None and not existing_candidates.empty and "score_weights" in existing_candidates.columns:
+        has_matching_weights = str(existing_candidates["score_weights"].iloc[0]) == expected_score_weights
     has_matching_engine = (
         existing_candidates is not None
         and not existing_candidates.empty
@@ -365,6 +375,7 @@ def build_final_prediction(
         and (climate_features is None or climate_features.empty or "score_climatico" in existing_candidates.columns)
         and has_full_exhaustive_scan
         and has_matching_history
+        and has_matching_weights
         and (
             (engine != "exaustivo" and "source_model" not in existing_candidates.columns)
             or str(existing_candidates["source_model"].iloc[0]) == source_model
