@@ -37,7 +37,11 @@ Endpoint publico da CAIXA:
 
 `https://servicebus2.caixa.gov.br/portaldeloterias/api/lotofacil`
 
-Risco: o endpoint e publico, mas pode mudar formato ou ficar indisponivel. Por isso o sistema salva JSON bruto, usa timeout, retentativas, logs e validacoes.
+Fallback automatico quando a CAIXA bloquear ou ficar indisponivel:
+
+`https://api.guidi.dev.br/loteria/lotofacil`
+
+Risco: o endpoint da CAIXA e publico, mas pode mudar formato, bloquear datacenters/VPS ou ficar indisponivel. Por isso o sistema salva JSON bruto, usa timeout, retentativas, fallback, logs e validacoes.
 
 Fonte climatica usada na camada experimental:
 

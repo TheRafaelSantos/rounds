@@ -7,9 +7,11 @@ from pathlib import Path
 import logging
 
 import pandas as pd
+import requests
 
 from lotofacil_analytics.auditoria import build_auditoria
 from lotofacil_analytics.backtest_lotofacil import compute_hits, run_backtest
+from lotofacil_analytics.caixa_client import CaixaLotofacilClient
 from lotofacil_analytics.calibrated_weights import load_supervised_calibrated_weights
 from lotofacil_analytics.calibration_pilot import run_calibration_pilot
 from lotofacil_analytics.climate_pipeline import ClimatePipeline
@@ -186,6 +188,44 @@ class LotofacilValidationTest(unittest.TestCase):
         nums = parse_numbers("01 - 02 - 03, 04 05 06 07 08 09 10 11 12 13 14 15")
 
         self.assertEqual(nums, list(range(1, 16)))
+
+    def test_caixa_client_uses_fallback_after_forbidden(self) -> None:
+        class FakeResponse:
+            def __init__(self, *, status_code: int, payload: dict) -> None:
+                self.status_code = status_code
+                self._payload = payload
+
+            def raise_for_status(self) -> None:
+                if self.status_code >= 400:
+                    error = requests.HTTPError(f"{self.status_code} Client Error")
+                    error.response = self
+                    raise error
+
+            def json(self) -> dict:
+                return self._payload
+
+        calls: list[str] = []
+
+        def fake_get(url: str, timeout: float) -> FakeResponse:
+            calls.append(url)
+            if "servicebus2.caixa.gov.br" in url:
+                return FakeResponse(status_code=403, payload={})
+            return FakeResponse(status_code=200, payload={"numero": 3721, "listaDezenas": [f"{n:02d}" for n in range(1, 16)]})
+
+        client = CaixaLotofacilClient(
+            timeout_seconds=1.0,
+            max_retries=3,
+            request_sleep_seconds=0,
+            logger=logging.getLogger("test"),
+        )
+        client.session.get = fake_get  # type: ignore[method-assign]
+
+        payload = client.fetch_latest()
+
+        self.assertEqual(int(payload["numero"]), 3721)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("servicebus2.caixa.gov.br", calls[0])
+        self.assertIn("api.guidi.dev.br", calls[1])
 
     def test_analyze_post_result_writes_expected_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
