@@ -2,18 +2,16 @@
 
 ## Resumo
 
-O projeto roda em dois containers Docker:
+O projeto roda em dois containers Docker por padrao:
 
 1. `lotofacil-web`: interface web na porta `8765`.
-2. `lotofacil-calibrator`: calibrador 24/7 que tenta pesos diferentes ate acertar 15 dezenas em um dos dois jogos historicos.
+2. `lotofacil-supervised`: aprendizado supervisionado 24/7 que usa o gabarito de concursos historicos para calibrar a media de pesos aplicada ao motor principal.
 
 Os arquivos de progresso ficam no volume `./data`, fora da imagem Docker. Se o container reiniciar, o processo continua do estado salvo.
 
-A calibracao usa cache por concurso em `data/processed/lotofacil_calibration_lab_cache`. A primeira tentativa de um concurso cria a matriz de scores; as tentativas seguintes reaproveitam essa matriz e apenas recalculam pesos.
+O aprendizado supervisionado avalia, para cada concurso historico, a sequencia real contra amostras concorrentes. Ele mede quais estudos deixariam o gabarito mais bem posicionado, calcula pesos por concurso e grava a media em `data/processed/lotofacil_engine_calibrated_weights.json`. Esse arquivo e carregado automaticamente pelo motor principal ao gerar novos jogos.
 
-Tentativas com 11, 12, 13 ou 14 acertos ficam salvas em `data/processed/lotofacil_calibration_lab_elites.csv`. O calibrador usa esses registros como memoria local para mutar, cruzar e refinar pesos que ja chegaram perto. Quando encontra 15 acertos em um dos dois jogos, salva em `lotofacil_calibration_lab_winners.csv`, recalcula a media vencedora e avanca para o proximo concurso.
-
-O calibrador tambem aplica penalizacao anti-repeticao: jogos ja testados muitas vezes, ou quase iguais aos jogos recentes, perdem score na tentativa atual. Isso reduz desperdicio quando a busca entra em plato repetindo a mesma combinacao.
+O antigo `lotofacil-calibrator` foi preservado no perfil Docker `legacy`, mas nao sobe por padrao para nao competir por CPU com o aprendizado supervisionado.
 
 ## Comandos principais na VPS
 
@@ -35,10 +33,10 @@ Ver containers:
 docker compose ps
 ```
 
-Ver logs do calibrador:
+Ver logs do aprendizado supervisionado:
 
 ```bash
-docker compose logs -f --tail=120 lotofacil-calibrator
+docker compose logs -f --tail=120 lotofacil-supervised
 ```
 
 Ver logs da interface:
@@ -50,7 +48,7 @@ docker compose logs -f --tail=120 lotofacil-web
 Testar status pela VPS:
 
 ```bash
-curl http://127.0.0.1:8765/api/calibration/status
+curl http://127.0.0.1:8765/api/supervised/status
 ```
 
 Parar sem apagar dados:
@@ -59,22 +57,27 @@ Parar sem apagar dados:
 docker compose down
 ```
 
-Reiniciar somente o calibrador:
+Reiniciar somente o aprendizado supervisionado:
 
 ```bash
-docker compose restart lotofacil-calibrator
+docker compose restart lotofacil-supervised
+```
+
+Rodar o calibrador antigo, se precisar comparar:
+
+```bash
+docker compose --profile legacy up -d lotofacil-calibrator
 ```
 
 ## Arquivos importantes
 
 ```text
-/opt/lotofacil/data/processed/lotofacil_calibration_lab_state.json
-/opt/lotofacil/data/processed/lotofacil_calibration_lab_attempts.csv
-/opt/lotofacil/data/processed/lotofacil_calibration_lab_winners.csv
-/opt/lotofacil/data/processed/lotofacil_calibration_lab_elites.csv
-/opt/lotofacil/data/processed/lotofacil_calibration_lab_average_weights.csv
+/opt/lotofacil/data/processed/lotofacil_supervised_calibration_state.json
+/opt/lotofacil/data/processed/lotofacil_supervised_calibration_results.csv
+/opt/lotofacil/data/processed/lotofacil_supervised_calibration_summary.csv
+/opt/lotofacil/data/processed/lotofacil_supervised_calibration_weights.csv
 /opt/lotofacil/data/processed/lotofacil_engine_calibrated_weights.json
-/opt/lotofacil/data/processed/lotofacil_calibration_lab_cache/
+/opt/lotofacil/data/exports/lotofacil_supervised_calibration.xlsx
 ```
 
 ## Como reverter

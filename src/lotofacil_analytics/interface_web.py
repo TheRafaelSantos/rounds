@@ -17,6 +17,7 @@ from .decision_layer_pipeline import DecisionLayerPipeline
 from .mandel_pipeline import MandelPipeline
 from .pipeline import LotofacilPipeline
 from .predictor_pipeline import PredictorPipeline
+from .supervised_calibration import load_supervised_calibration_status
 from .transition_pipeline import TransitionPipeline
 
 
@@ -93,6 +94,7 @@ def _html_page() -> str:
     <button onclick="predict()">Gerar 2 jogos</button>
     <button onclick="mandel()">Plano Mandel/bolão</button>
     <button onclick="calibrationStatus()">Calibração 24/7</button>
+    <button onclick="supervisedStatus()">Aprendizado supervisionado</button>
     <button onclick="window.location='/report'">Baixar relatorio</button>
     <button onclick="window.location='/single-report'">Baixar relatorio jogo unico</button>
     <button onclick="window.location='/mandel-report'">Baixar relatorio Mandel</button>
@@ -310,6 +312,44 @@ def _html_page() -> str:
         ]) + '</section>' +
       '</section>';
     }
+    function renderSupervised(data) {
+      const state = data.state || {};
+      const recent = data.recent_results || [];
+      const weights = data.weights || [];
+      const engineWeights = data.engine_weights || {};
+      const processed = state.total_contests_processed || recent.length || 0;
+      const activeWeights = Object.keys(engineWeights).length
+        ? Object.keys(engineWeights).map(function(key) {
+            return {componente: key, peso_percentual: Number(engineWeights[key] || 0) * 100};
+          })
+        : weights;
+      return '<section class="calibration-panel">' +
+        '<div class="game-head"><h2>Aprendizado supervisionado</h2><span class="tag">' + escapeHtml(state.status || 'sem status') + '</span></div>' +
+        '<div class="status-grid">' +
+          statusCard('Concurso atual', state.current_concurso || '-') +
+          statusCard('Último processado', state.last_concurso || '-') +
+          statusCard('Concursos aprendidos', processed) +
+          statusCard('Rank médio antes', state.rank_before_avg ?? '-') +
+          statusCard('Rank médio depois', state.rank_after_avg ?? '-') +
+          statusCard('Último rank antes', state.last_rank_antes ?? '-') +
+          statusCard('Último rank depois', state.last_rank_depois ?? '-') +
+          statusCard('Última melhora', state.last_melhora_rank ?? '-') +
+          statusCard('Amostras/concurso', state.samples || '-') +
+          statusCard('Tempo execução atual', state.elapsed_seconds_current_run ? Number(state.elapsed_seconds_current_run).toFixed(0) + 's' : '-') +
+        '</div>' +
+        '<div class="exclusives"><strong>Como ler:</strong> rank menor e percentil maior indicam que a sequência real ficou melhor posicionada com os pesos aprendidos.</div>' +
+        '<section class="comparison"><h2>Pesos atualmente aplicados no motor</h2>' + weightRows(activeWeights) + '</section>' +
+        '<section class="comparison"><h2>Últimos concursos aprendidos</h2>' + tableRows(recent, [
+          {key: 'concurso', label: 'Concurso'},
+          {key: 'rank_antes', label: 'Rank antes'},
+          {key: 'rank_depois', label: 'Rank depois'},
+          {key: 'melhora_rank', label: 'Melhora'},
+          {key: 'percentil_antes', label: 'Percentil antes'},
+          {key: 'percentil_depois', label: 'Percentil depois'},
+          {key: 'jogo_real', label: 'Jogo real'}
+        ]) + '</section>' +
+      '</section>';
+    }
     async function request(path, options) {
       const output = document.getElementById('output');
       output.textContent = 'Processando...';
@@ -322,6 +362,10 @@ def _html_page() -> str:
     async function calibrationStatus() {
       const data = await request('/api/calibration/status');
       document.getElementById('games').innerHTML = renderCalibration(data);
+    }
+    async function supervisedStatus() {
+      const data = await request('/api/supervised/status');
+      document.getElementById('games').innerHTML = renderSupervised(data);
     }
     async function updateBase() { await request('/api/update', {method: 'POST'}); }
     async function transitions() { await request('/api/transitions', {method: 'POST'}); }
@@ -435,6 +479,17 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                         elites_csv_path=config.calibration_lab_elites_csv_path,
                         average_weights_csv_path=config.calibration_lab_average_weights_csv_path,
                         engine_weights_json_path=config.engine_calibration_weights_json_path,
+                    )
+                )
+                return
+            if self.path == "/api/supervised/status":
+                self._handle_json(
+                    lambda: load_supervised_calibration_status(
+                        state_json_path=config.supervised_calibration_state_json_path,
+                        results_csv_path=config.supervised_calibration_results_csv_path,
+                        summary_csv_path=config.supervised_calibration_summary_csv_path,
+                        weights_csv_path=config.supervised_calibration_weights_csv_path,
+                        weights_json_path=config.engine_calibration_weights_json_path,
                     )
                 )
                 return

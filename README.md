@@ -24,6 +24,7 @@ Fases implementadas:
 14. **Temporal profundo - dia da semana, ultimos 15/30 dias, bimestre, trimestre e semestre**.
 15. **Calibracao do motor - pesos walk-forward de 2500 ate o ultimo concurso local**.
 16. **Calibracao 24/7 retomavel - busca pesos ate acertar 15 dezenas em um dos dois jogos historicos, guarda elites de 11/12/13/14 acertos e aplica a media vencedora ao motor principal**.
+17. **Aprendizado supervisionado - usa o gabarito dos concursos historicos para calibrar a contribuicao media de cada estudo e gravar esses pesos no motor principal**.
 
 Tambem estao implementados: analise pos-sorteio, auditoria de falsos negativos/falsos positivos, backtest especifico do score final `ensemble_score_v2` contra baseline aleatorio, motor exaustivo `ensemble_score_v4_exaustivo_transicao`, camada climatica e camada de decisao acima do motor atual.
 
@@ -199,6 +200,31 @@ Arquivos principais:
 
 Quando algum concurso e resolvido com 15 pontos, a media dos pesos vencedores e salva em `lotofacil_engine_calibrated_weights.json`. Esse arquivo e carregado automaticamente pelo motor principal de 2 jogos (`--predict` e `--optimize` com motor exaustivo).
 
+Rodar aprendizado supervisionado com gabarito historico:
+
+```powershell
+python main.py --supervised-calibration --supervised-from-concurso 2500 --supervised-samples 800 --supervised-max-contests 25 --draw-hour 20 --draw-minute 0
+```
+
+Esse comando usa concursos ja encerrados como gabarito. Para cada concurso historico, ele calcula os scores de todos os estudos para a sequencia real e para uma amostra de combinacoes concorrentes. Depois mede quais estudos colocariam a sequencia real em melhor posicao, salva os pesos aprendidos e atualiza a media em `lotofacil_engine_calibrated_weights.json`. O motor principal passa a carregar esse arquivo automaticamente ao gerar novos jogos.
+
+Para rodar continuamente e retomar de onde parou:
+
+```powershell
+python main.py --supervised-calibration --supervised-loop --supervised-from-concurso 2500 --supervised-samples 800 --supervised-max-contests 25 --supervised-sleep-seconds 30 --draw-hour 20 --draw-minute 0
+```
+
+Arquivos principais:
+
+1. `data/processed/lotofacil_supervised_calibration_state.json`;
+2. `data/processed/lotofacil_supervised_calibration_results.csv`;
+3. `data/processed/lotofacil_supervised_calibration_summary.csv`;
+4. `data/processed/lotofacil_supervised_calibration_weights.csv`;
+5. `data/processed/lotofacil_engine_calibrated_weights.json`;
+6. `data/exports/lotofacil_supervised_calibration.xlsx`.
+
+Na interface web, clique em **Aprendizado supervisionado** para acompanhar status, pesos atuais, ranking antes/depois e ultimos concursos aprendidos.
+
 Gerar combinacoes e assinaturas:
 
 ```powershell
@@ -362,10 +388,16 @@ Ver containers:
 docker compose ps
 ```
 
-Ver logs do calibrador:
+Ver logs do aprendizado supervisionado:
 
 ```powershell
-docker compose logs -f --tail=120 lotofacil-calibrator
+docker compose logs -f --tail=120 lotofacil-supervised
+```
+
+O antigo laboratorio 24/7 continua disponivel, mas fica no perfil `legacy` para nao competir com o aprendizado supervisionado:
+
+```powershell
+docker compose --profile legacy up -d lotofacil-calibrator
 ```
 
 Parar sem apagar dados:

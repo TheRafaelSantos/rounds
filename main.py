@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 
@@ -34,6 +35,7 @@ from lotofacil_analytics.pipeline import LotofacilPipeline
 from lotofacil_analytics.post_result_analysis import analyze_post_result
 from lotofacil_analytics.predictor_pipeline import PredictorPipeline
 from lotofacil_analytics.interface_web import run_web_server
+from lotofacil_analytics.supervised_calibration_pipeline import SupervisedCalibrationPipeline
 from lotofacil_analytics.transition_pipeline import TransitionPipeline
 from lotofacil_analytics.temporal_deep_pipeline import TemporalDeepPipeline
 
@@ -77,6 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--tune-weights", action="store_true", help="Testa perfis de pesos e salva o melhor perfil observado.")
     mode.add_argument("--calibrate-engine", action="store_true", help="Calibra pesos do motor por walk-forward contra concursos passados.")
     mode.add_argument("--calibration-lab", action="store_true", help="Roda calibracao 24/7 retomavel buscando 15 pontos em um dos dois jogos.")
+    mode.add_argument("--supervised-calibration", action="store_true", help="Roda aprendizado supervisionado com gabarito historico e aplica pesos medios ao motor.")
     mode.add_argument("--calibration-pilot", action="store_true", help="Roda piloto retomavel de busca de pesos por resultado final.")
     mode.add_argument("--analyze-result", action="store_true", help="Analisa resultado real contra os jogos previstos.")
     mode.add_argument("--final-backtest", action="store_true", help="Executa backtest do score final completo contra aleatorio.")
@@ -131,6 +134,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lab-exhaustive-limit", type=int, default=0, help="Limite tecnico de combinacoes por tentativa; 0 avalia todas.")
     parser.add_argument("--lab-max-runtime-seconds", type=int, default=0, help="Tempo maximo desta execucao do --calibration-lab; 0 sem limite.")
     parser.add_argument("--lab-reset", action="store_true", help="Apaga a memoria anterior do --calibration-lab.")
+    parser.add_argument("--supervised-from-concurso", type=int, default=2500, help="Concurso inicial do --supervised-calibration.")
+    parser.add_argument("--supervised-to-concurso", type=int, default=None, help="Concurso final do --supervised-calibration; omitido usa ultimo local.")
+    parser.add_argument("--supervised-samples", type=int, default=800, help="Amostras de combinacoes por concurso no aprendizado supervisionado.")
+    parser.add_argument("--supervised-max-contests", type=int, default=0, help="Maximo de concursos nesta execucao do --supervised-calibration; 0 processa todos.")
+    parser.add_argument("--supervised-reset", action="store_true", help="Apaga a memoria anterior do --supervised-calibration.")
+    parser.add_argument("--supervised-loop", action="store_true", help="Mantem o --supervised-calibration rodando em ciclos retomaveis.")
+    parser.add_argument("--supervised-sleep-seconds", type=int, default=30, help="Pausa entre ciclos do --supervised-loop.")
     parser.add_argument("--pilot-concurso", type=int, default=2500, help="Concurso-alvo do --calibration-pilot.")
     parser.add_argument("--pilot-games", type=int, default=100, help="Quantidade de tentativas de pesos/jogos no --calibration-pilot.")
     parser.add_argument("--pilot-candidate-pool", type=int, default=5000, help="Quantidade de candidatos base reaproveitados no piloto.")
@@ -183,6 +193,7 @@ def main() -> int:
         or args.tune_weights
         or args.calibrate_engine
         or args.calibration_lab
+        or args.supervised_calibration
         or args.calibration_pilot
         or args.analyze_result
         or args.final_backtest
@@ -334,6 +345,39 @@ def main() -> int:
                 min_history=args.min_history,
                 max_runtime_seconds=args.lab_max_runtime_seconds,
                 reset=args.lab_reset,
+            )
+        elif args.supervised_calibration:
+            pipeline_supervised = SupervisedCalibrationPipeline(config=config, logger=logger)
+            if args.supervised_loop:
+                reset_next_cycle = bool(args.supervised_reset)
+                while True:
+                    summary = pipeline_supervised.run(
+                        from_concurso=args.supervised_from_concurso,
+                        to_concurso=args.supervised_to_concurso,
+                        samples=args.supervised_samples,
+                        max_contests=args.supervised_max_contests,
+                        seed=args.seed,
+                        draw_hour=args.draw_hour,
+                        draw_minute=args.draw_minute,
+                        min_history=args.min_history,
+                        reset=reset_next_cycle,
+                    )
+                    print(summary.to_console(), flush=True)
+                    reset_next_cycle = False
+                    sleep_seconds = max(5, int(args.supervised_sleep_seconds))
+                    if summary.status == "complete":
+                        logger.info("Calibracao supervisionada completa; aguardando %s segundos.", sleep_seconds)
+                    time.sleep(sleep_seconds)
+            summary = pipeline_supervised.run(
+                from_concurso=args.supervised_from_concurso,
+                to_concurso=args.supervised_to_concurso,
+                samples=args.supervised_samples,
+                max_contests=args.supervised_max_contests,
+                seed=args.seed,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+                min_history=args.min_history,
+                reset=args.supervised_reset,
             )
         elif args.calibration_pilot:
             summary = CalibrationPilotPipeline(config=config, logger=logger).run(

@@ -45,6 +45,7 @@ from lotofacil_analytics.optimizer import build_optimized_candidates, score_cand
 from lotofacil_analytics.post_result_analysis import analyze_post_result, parse_numbers
 from lotofacil_analytics.predictor import select_final_games
 from lotofacil_analytics.selection_guard import build_number_guard_table, enrich_candidates_with_decision_guard
+from lotofacil_analytics.supervised_calibration import load_supervised_calibration_status, run_supervised_calibration
 from lotofacil_analytics.temporal_deep import build_temporal_deep_rows, temporal_deep_number_scores
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.transition_analysis import build_transition_model, build_transition_outputs, score_transition_candidate
@@ -1010,11 +1011,57 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertTrue((base / "mandel.xlsx").exists())
             self.assertEqual(summary.tamanho_universo, 17)
 
+    def test_supervised_calibration_writes_engine_weights(self) -> None:
+        rows = []
+        for idx in range(1, 20):
+            payload = payload_with_dezenas(idx, cyclic_dezenas(idx))
+            payload["nomeMunicipioUFSorteio"] = "SAO PAULO, SP"
+            payload["localSorteio"] = "ESPAÇO DA SORTE"
+            rows.append(normalize_contest(payload))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            summary = run_supervised_calibration(
+                pd.DataFrame(rows),
+                climate_features=pd.DataFrame(),
+                from_concurso=14,
+                to_concurso=15,
+                samples=12,
+                max_contests=2,
+                seed=123,
+                draw_hour=20,
+                draw_minute=0,
+                min_history=10,
+                reset=True,
+                state_json_path=base / "state.json",
+                results_csv_path=base / "results.csv",
+                summary_csv_path=base / "summary.csv",
+                weights_csv_path=base / "weights.csv",
+                excel_path=base / "supervised.xlsx",
+                weights_json_path=base / "engine_weights.json",
+            )
+            status = load_supervised_calibration_status(
+                state_json_path=base / "state.json",
+                results_csv_path=base / "results.csv",
+                summary_csv_path=base / "summary.csv",
+                weights_csv_path=base / "weights.csv",
+                weights_json_path=base / "engine_weights.json",
+            )
+
+            self.assertEqual(summary.total_contests_processed, 2)
+            self.assertTrue((base / "engine_weights.json").exists())
+            self.assertTrue((base / "results.csv").exists())
+            self.assertTrue((base / "supervised.xlsx").exists())
+            self.assertGreater(len(status["weights"]), 0)
+            self.assertGreater(len(status["recent_results"]), 0)
+            self.assertAlmostEqual(sum(float(v) for v in status["engine_weights"].values()), 1.0, places=5)
+
     def test_web_interface_html_contains_expected_controls(self) -> None:
         html = _html_page()
         self.assertIn("Lotofacil Analytics", html)
         self.assertIn("/api/status", html)
         self.assertIn("/api/calibration/status", html)
+        self.assertIn("/api/supervised/status", html)
         self.assertIn("/api/transitions", html)
         self.assertIn("/api/climate", html)
         self.assertIn("/api/predict", html)
@@ -1029,6 +1076,7 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("Decisão protegida", html)
         self.assertIn("Anti-falso-negativo", html)
         self.assertIn("Calibração 24/7", html)
+        self.assertIn("Aprendizado supervisionado", html)
 
     def test_generate_games_balanceado_returns_requested_quantity(self) -> None:
         rows = []
