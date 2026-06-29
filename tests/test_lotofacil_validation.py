@@ -847,6 +847,11 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertTrue((base / "supervised.xlsx").exists())
             self.assertGreater(len(status["weights"]), 0)
             self.assertGreater(len(status["recent_results"]), 0)
+            self.assertGreater(len(status["best_results"]), 0)
+            self.assertGreater(len(status["progress_blocks"]), 0)
+            self.assertEqual(status["state"]["eligible_target_count"], 2)
+            self.assertEqual(status["state"]["remaining_eligible_count"], 0)
+            self.assertEqual(status["state"]["status"], "complete")
             self.assertAlmostEqual(sum(float(v) for v in status["engine_weights"].values()), 1.0, places=5)
 
     def test_web_interface_html_contains_expected_controls(self) -> None:
@@ -870,6 +875,9 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("Anti-falso-negativo", html)
         self.assertNotIn("Calibração 24/7", html)
         self.assertIn("Aprendizado supervisionado", html)
+        self.assertIn("Progresso elegível", html)
+        self.assertIn("Evolução por blocos de concursos", html)
+        self.assertIn("Melhores posicionamentos aprendidos", html)
 
     def test_generate_games_balanceado_returns_requested_quantity(self) -> None:
         rows = []

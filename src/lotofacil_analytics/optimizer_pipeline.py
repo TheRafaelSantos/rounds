@@ -48,8 +48,7 @@ class OptimizerPipeline:
                 draw_minute=draw_minute,
                 limit_combinations=exhaustive_limit,
                 weights=load_supervised_calibrated_weights(
-                    self.config.supervised_calibration_weights_json_path,
-                    fallback_path=self.config.engine_calibration_weights_json_path,
+                    self.config.supervised_calibration_weights_json_path
                 ),
                 climate_features=climate_features,
                 target_climate=target_climate,

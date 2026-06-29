@@ -410,6 +410,9 @@ def _write_outputs(
     from_concurso: int,
     to_concurso: int | None,
     samples: int,
+    min_history: int,
+    eligible_target_count: int,
+    skipped_min_history_count: int,
     draw_hour: int,
     draw_minute: int,
 ) -> Tuple[pd.DataFrame, Dict[str, float]]:
@@ -429,6 +432,9 @@ def _write_outputs(
                 {"metrica": "percentil_depois_medio", "valor": round(float(pd.to_numeric(results["percentil_depois"], errors="coerce").mean()), 6)},
                 {"metrica": "ultimo_concurso", "valor": int(pd.to_numeric(results["concurso"], errors="coerce").max())},
                 {"metrica": "samples_por_concurso", "valor": int(samples)},
+                {"metrica": "historico_minimo_supervisionado", "valor": int(min_history)},
+                {"metrica": "concursos_elegiveis", "valor": int(eligible_target_count)},
+                {"metrica": "concursos_pulados_por_historico_minimo", "valor": int(skipped_min_history_count)},
             ]
         )
     else:
@@ -450,6 +456,9 @@ def _write_outputs(
         "from_concurso": int(from_concurso),
         "to_concurso": int(to_concurso) if to_concurso is not None else None,
         "samples_per_concurso": int(samples),
+        "min_history": int(min_history),
+        "eligible_contests": int(eligible_target_count),
+        "skipped_min_history_contests": int(skipped_min_history_count),
         "draw_hour": int(draw_hour),
         "draw_minute": int(draw_minute),
         "contests": int(results["concurso"].nunique()) if not results.empty else 0,
@@ -505,16 +514,25 @@ def run_supervised_calibration(
     df = concursos.copy().sort_values("concurso").reset_index(drop=True)
     df["concurso"] = pd.to_numeric(df["concurso"], errors="coerce").astype("Int64")
     max_target = int(to_concurso) if to_concurso is not None else int(df["concurso"].max())
-    targets = [
+    contest_indices: Dict[int, int] = {}
+    for idx, value in df["concurso"].items():
+        if pd.notna(value):
+            contest_indices[int(value)] = int(idx)
+    requested_targets = [
         int(value)
         for value in df["concurso"].dropna().astype(int).tolist()
         if int(value) >= int(from_concurso) and int(value) <= int(max_target)
     ]
+    targets = [target for target in requested_targets if int(contest_indices.get(target, -1)) >= int(min_history)]
+    target_set = set(targets)
+    skipped_min_history_count = len(requested_targets) - len(targets)
     if not targets:
-        raise ValueError("Nenhum concurso encontrado no intervalo da calibracao supervisionada.")
+        raise ValueError("Nenhum concurso elegivel no intervalo da calibracao supervisionada com o historico minimo informado.")
 
     results = _read_csv(results_csv_path)
     processed = set(int(value) for value in pd.to_numeric(results.get("concurso", pd.Series(dtype=int)), errors="coerce").dropna().tolist()) if not results.empty else set()
+    processed_in_scope = processed & target_set
+    pending_in_scope = sorted(target_set - processed)
     state = _load_json(state_json_path)
     state.update(
         {
@@ -524,6 +542,16 @@ def run_supervised_calibration(
             "to_concurso": int(max_target),
             "samples": int(samples),
             "max_contests_this_run": int(max_contests),
+            "min_history": int(min_history),
+            "requested_target_count": int(len(requested_targets)),
+            "eligible_target_count": int(len(targets)),
+            "skipped_min_history_count": int(skipped_min_history_count),
+            "first_eligible_concurso": int(min(targets)),
+            "last_eligible_concurso": int(max(targets)),
+            "processed_eligible_count": int(len(processed_in_scope)),
+            "remaining_eligible_count": int(len(pending_in_scope)),
+            "progress_percent": round(float(len(processed_in_scope)) / float(len(targets)) * 100.0, 6),
+            "next_pending_concurso": int(pending_in_scope[0]) if pending_in_scope else None,
             "draw_hour": int(draw_hour),
             "draw_minute": int(draw_minute),
         }
@@ -595,9 +623,14 @@ def run_supervised_calibration(
             from_concurso=from_concurso,
             to_concurso=max_target,
             samples=samples,
+            min_history=min_history,
+            eligible_target_count=len(targets),
+            skipped_min_history_count=skipped_min_history_count,
             draw_hour=draw_hour,
             draw_minute=draw_minute,
         )
+        processed_in_scope = processed & target_set
+        pending_in_scope = sorted(target_set - processed)
         state.update(
             {
                 "status": "running",
@@ -608,6 +641,10 @@ def run_supervised_calibration(
                 "last_melhora_rank": int(rank_before - rank_after),
                 "total_contests_processed": int(results["concurso"].nunique()),
                 "contests_processed_this_run": int(processed_this_run),
+                "processed_eligible_count": int(len(processed_in_scope)),
+                "remaining_eligible_count": int(len(pending_in_scope)),
+                "progress_percent": round(float(len(processed_in_scope)) / float(len(targets)) * 100.0, 6),
+                "next_pending_concurso": int(pending_in_scope[0]) if pending_in_scope else None,
                 "rank_before_avg": round(float(pd.to_numeric(results["rank_antes"], errors="coerce").mean()), 6),
                 "rank_after_avg": round(float(pd.to_numeric(results["rank_depois"], errors="coerce").mean()), 6),
                 "weights": {component: round(float(weights[component]), 10) for component in COMPONENTS},
@@ -622,11 +659,19 @@ def run_supervised_calibration(
             _write_json(state_json_path, state)
             break
 
-    if processed_this_run == 0 and len(processed) >= len(targets):
+    remaining = [target for target in targets if target not in processed]
+    if not remaining:
+        state["status"] = "complete"
+    elif processed_this_run == 0 and len(processed) >= len(targets):
         state["status"] = "complete"
     elif state.get("status") != "paused_by_contest_limit":
-        remaining = [target for target in targets if target not in processed]
         state["status"] = "complete" if not remaining else "running"
+    processed_in_scope = processed & target_set
+    pending_in_scope = sorted(target_set - processed)
+    state["processed_eligible_count"] = int(len(processed_in_scope))
+    state["remaining_eligible_count"] = int(len(pending_in_scope))
+    state["progress_percent"] = round(float(len(processed_in_scope)) / float(len(targets)) * 100.0, 6)
+    state["next_pending_concurso"] = int(pending_in_scope[0]) if pending_in_scope else None
     state["updated_at"] = _now()
     state["elapsed_seconds_current_run"] = round(float(time.perf_counter() - started), 6)
     _write_json(state_json_path, state)
@@ -640,6 +685,9 @@ def run_supervised_calibration(
         from_concurso=from_concurso,
         to_concurso=max_target,
         samples=samples,
+        min_history=min_history,
+        eligible_target_count=len(targets),
+        skipped_min_history_count=skipped_min_history_count,
         draw_hour=draw_hour,
         draw_minute=draw_minute,
     )
@@ -676,11 +724,55 @@ def load_supervised_calibration_status(
     summary = _read_csv(summary_csv_path)
     weights = _read_csv(weights_csv_path)
     weights_payload = _load_json(weights_json_path)
+    recent = results.tail(int(recent_rows)) if not results.empty else pd.DataFrame()
+    best = pd.DataFrame()
+    blocks = pd.DataFrame()
+    if not results.empty:
+        scored = results.copy()
+        scored["concurso"] = pd.to_numeric(scored["concurso"], errors="coerce")
+        scored["rank_antes"] = pd.to_numeric(scored["rank_antes"], errors="coerce")
+        scored["rank_depois"] = pd.to_numeric(scored["rank_depois"], errors="coerce")
+        scored["melhora_rank"] = pd.to_numeric(scored["melhora_rank"], errors="coerce")
+        scored["percentil_depois"] = pd.to_numeric(scored["percentil_depois"], errors="coerce")
+        scored = scored.dropna(subset=["concurso"])
+        state.setdefault("total_contests_processed", int(scored["concurso"].nunique()))
+        state.setdefault("first_processed_concurso", int(scored["concurso"].min()))
+        state.setdefault("last_processed_concurso", int(scored["concurso"].max()))
+        if "rank_antes" in scored and "rank_depois" in scored:
+            state.setdefault("rank_before_avg", round(float(scored["rank_antes"].mean()), 6))
+            state.setdefault("rank_after_avg", round(float(scored["rank_depois"].mean()), 6))
+            state["rank_improvement_avg"] = round(float((scored["rank_antes"] - scored["rank_depois"]).mean()), 6)
+            state["best_rank_after"] = int(scored["rank_depois"].min()) if pd.notna(scored["rank_depois"].min()) else None
+        best = scored.sort_values(["rank_depois", "rank_antes", "concurso"], ascending=[True, True, False]).head(10)
+        scored["bloco_inicio"] = (((scored["concurso"].astype(int) - 1) // 100) * 100 + 1).astype(int)
+        scored["bloco_fim"] = scored["bloco_inicio"] + 99
+        block_rows: List[Dict[str, object]] = []
+        for (start, end), group in scored.groupby(["bloco_inicio", "bloco_fim"], sort=True):
+            block_rows.append(
+                {
+                    "bloco": f"{int(start)}-{int(end)}",
+                    "concursos": int(group["concurso"].nunique()),
+                    "rank_antes_medio": round(float(group["rank_antes"].mean()), 6),
+                    "rank_depois_medio": round(float(group["rank_depois"].mean()), 6),
+                    "melhora_media": round(float(group["melhora_rank"].mean()), 6),
+                    "percentil_depois_medio": round(float(group["percentil_depois"].mean()), 6),
+                }
+            )
+        blocks = pd.DataFrame(block_rows).tail(18)
+
+    def records(frame: pd.DataFrame) -> List[Dict[str, object]]:
+        if frame.empty:
+            return []
+        clean = frame.astype(object).where(pd.notna(frame), None)
+        return clean.to_dict(orient="records")
+
     return {
         "state": state,
-        "recent_results": results.tail(int(recent_rows)).astype(object).where(pd.notna(results.tail(int(recent_rows))), None).to_dict(orient="records") if not results.empty else [],
-        "summary": summary.astype(object).where(pd.notna(summary), None).to_dict(orient="records") if not summary.empty else [],
-        "weights": weights.astype(object).where(pd.notna(weights), None).to_dict(orient="records") if not weights.empty else [],
+        "recent_results": records(recent),
+        "best_results": records(best),
+        "progress_blocks": records(blocks),
+        "summary": records(summary),
+        "weights": records(weights),
         "engine_weights": weights_payload.get("weights", {}) if isinstance(weights_payload, dict) else {},
         "paths": {
             "state_json_path": str(state_json_path),

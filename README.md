@@ -149,40 +149,18 @@ Arquivos gerados:
 
 Esse comando fica como estudo tecnico. A geracao oficial dos 2 jogos usa somente os pesos do aprendizado supervisionado.
 
-Rodar piloto retomavel de busca de pesos por resultado final:
-
-```powershell
-python main.py --calibration-pilot --pilot-concurso 2500 --pilot-games 100 --pilot-candidate-pool 5000 --draw-hour 20 --draw-minute 0
-```
-
-Esse piloto nao altera os pesos oficiais do motor principal. Ele cria uma base de candidatos para o concurso-alvo, testa combinacoes de pesos, gera 2 jogos por tentativa e compara somente a quantidade de acertos. Se o computador desligar, rode o mesmo comando novamente e ele continua das tentativas ja salvas.
-
-Para reiniciar do zero o piloto de um concurso:
-
-```powershell
-python main.py --calibration-pilot --pilot-concurso 2500 --pilot-games 100 --pilot-reset --draw-hour 20 --draw-minute 0
-```
-
-Arquivos gerados para o concurso 2500:
-
-1. `data/processed/lotofacil_calibration_pilot_candidates_2500.csv`;
-2. `data/processed/lotofacil_calibration_pilot_results_2500.csv`;
-3. `data/processed/lotofacil_calibration_pilot_summary_2500.csv`;
-4. `data/processed/lotofacil_calibration_pilot_state_2500.json`;
-5. `data/exports/lotofacil_calibration_pilot_2500.xlsx`.
-
 Rodar aprendizado supervisionado com gabarito historico:
 
 ```powershell
-python main.py --supervised-calibration --supervised-from-concurso 2500 --supervised-samples 800 --supervised-max-contests 25 --draw-hour 20 --draw-minute 0
+python main.py --supervised-calibration --supervised-from-concurso 1 --supervised-min-history 10 --supervised-samples 800 --supervised-max-contests 25 --draw-hour 20 --draw-minute 0
 ```
 
-Esse comando usa concursos ja encerrados como gabarito. Para cada concurso historico, ele calcula os scores de todos os estudos para a sequencia real e para uma amostra de combinacoes concorrentes. Depois mede quais estudos colocariam a sequencia real em melhor posicao, salva os pesos aprendidos e atualiza a media em `lotofacil_supervised_calibrated_weights.json`. O motor principal passa a carregar somente esse arquivo ao gerar novos jogos.
+Esse comando usa concursos ja encerrados como gabarito. Para cada concurso historico elegivel, ele calcula os scores de todos os estudos para a sequencia real e para uma amostra de combinacoes concorrentes. Concursos sem historico anterior suficiente sao pulados para evitar vazamento de futuro. Depois mede quais estudos colocariam a sequencia real em melhor posicao, salva os pesos aprendidos e atualiza a media em `lotofacil_supervised_calibrated_weights.json`. O motor principal passa a carregar somente esse arquivo ao gerar jogo unico, 2 jogos e plano Mandel. Se o arquivo supervisionado ainda nao existir, o motor usa o padrao interno, sem recorrer a calibracoes antigas.
 
 Para rodar continuamente e retomar de onde parou:
 
 ```powershell
-python main.py --supervised-calibration --supervised-loop --supervised-from-concurso 2500 --supervised-samples 800 --supervised-max-contests 25 --supervised-sleep-seconds 30 --draw-hour 20 --draw-minute 0
+python main.py --supervised-calibration --supervised-loop --supervised-from-concurso 1 --supervised-min-history 10 --supervised-samples 800 --supervised-max-contests 25 --supervised-sleep-seconds 30 --draw-hour 20 --draw-minute 0
 ```
 
 Arquivos principais:
@@ -194,7 +172,7 @@ Arquivos principais:
 5. `data/processed/lotofacil_supervised_calibrated_weights.json`;
 6. `data/exports/lotofacil_supervised_calibration.xlsx`.
 
-Na interface web, clique em **Aprendizado supervisionado** para acompanhar status, pesos atuais, ranking antes/depois e ultimos concursos aprendidos.
+Na interface web, clique em **Aprendizado supervisionado** para acompanhar status, progresso no historico elegivel, pesos atuais, ranking antes/depois, melhores posicionamentos, evolucao por blocos e ultimos concursos aprendidos.
 
 Gerar combinacoes e assinaturas:
 

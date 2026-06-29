@@ -5,6 +5,7 @@ import logging
 
 import pandas as pd
 
+from .calibrated_weights import load_supervised_calibrated_weights
 from .climate_runtime import load_runtime_climate
 from .config import AppConfig
 from .decision_layer import (
@@ -63,6 +64,7 @@ class DecisionLayerPipeline:
             excel_path=self.config.single_prediction_excel_path,
             climate_features=climate_features,
             target_climate=target_climate,
+            weights=load_supervised_calibrated_weights(self.config.supervised_calibration_weights_json_path),
         )
         self.logger.info("Jogo unico salvo em %s", self.config.single_prediction_csv_path)
         self.logger.info("Relatorio do jogo unico salvo em %s", self.config.single_prediction_report_path)

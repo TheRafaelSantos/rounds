@@ -262,6 +262,7 @@ def _has_default_exhaustive_candidates(
     *,
     expected_base_final: int | None = None,
     expected_target_date: str | None = None,
+    expected_score_weights: Mapping[str, float] | None = None,
     require_climate: bool = False,
 ) -> bool:
     if existing_candidates is None or existing_candidates.empty:
@@ -288,6 +289,13 @@ def _has_default_exhaustive_candidates(
         if "contexto_data_proximo_concurso" not in existing_candidates.columns:
             return False
         if str(existing_candidates["contexto_data_proximo_concurso"].iloc[0]) != str(expected_target_date):
+            return False
+    if expected_score_weights is not None:
+        if "score_weights" not in existing_candidates.columns:
+            return False
+        current_score_weights = str(existing_candidates["score_weights"].iloc[0])
+        expected_text = format_exhaustive_weights(resolve_exhaustive_weights(expected_score_weights))
+        if current_score_weights != expected_text:
             return False
     return True
 
@@ -488,6 +496,7 @@ def build_single_prediction(
     excel_path: Path,
     climate_features: pd.DataFrame | None = None,
     target_climate: Mapping[str, object] | None = None,
+    weights: Mapping[str, float] | None = None,
 ) -> SinglePredictionSummary:
     if concursos.empty:
         raise ValueError("Historico local nao encontrado. Rode primeiro: python main.py --update")
@@ -497,7 +506,7 @@ def build_single_prediction(
     last_concurso = int(last["concurso"])
     last_date = str(last["data_sorteio"])
     target_context = build_target_context(df, draw_hour=draw_hour, draw_minute=draw_minute, target_climate=target_climate)
-    weights = weights_for_profile(weight_profile)
+    weights = resolve_exhaustive_weights(weights if weights is not None else weights_for_profile(weight_profile))
 
     if engine == "exaustivo":
         if (
@@ -507,6 +516,7 @@ def build_single_prediction(
                 existing_candidates,
                 expected_base_final=last_concurso,
                 expected_target_date=target_context.data_proximo_concurso,
+                expected_score_weights=weights,
                 require_climate=climate_features is not None and not climate_features.empty,
             )
         ):

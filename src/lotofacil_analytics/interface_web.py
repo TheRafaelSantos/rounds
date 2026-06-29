@@ -259,6 +259,8 @@ def _html_page() -> str:
     function renderSupervised(data) {
       const state = data.state || {};
       const recent = data.recent_results || [];
+      const best = data.best_results || [];
+      const blocks = data.progress_blocks || [];
       const weights = data.weights || [];
       const engineWeights = data.engine_weights || {};
       const processed = state.total_contests_processed || recent.length || 0;
@@ -273,16 +275,41 @@ def _html_page() -> str:
           statusCard('Concurso atual', state.current_concurso || '-') +
           statusCard('Último processado', state.last_concurso || '-') +
           statusCard('Concursos aprendidos', processed) +
+          statusCard('Progresso elegível', state.progress_percent !== undefined ? Number(state.progress_percent).toFixed(2) + '%' : '-') +
+          statusCard('Concursos elegíveis', state.eligible_target_count || '-') +
+          statusCard('Pendentes elegíveis', state.remaining_eligible_count ?? '-') +
+          statusCard('Próximo pendente', state.next_pending_concurso || '-') +
+          statusCard('Primeiro elegível', state.first_eligible_concurso || '-') +
+          statusCard('Pulados sem histórico', state.skipped_min_history_count ?? '-') +
           statusCard('Rank médio antes', state.rank_before_avg ?? '-') +
           statusCard('Rank médio depois', state.rank_after_avg ?? '-') +
+          statusCard('Melhora média', state.rank_improvement_avg ?? '-') +
+          statusCard('Melhor rank depois', state.best_rank_after ?? '-') +
           statusCard('Último rank antes', state.last_rank_antes ?? '-') +
           statusCard('Último rank depois', state.last_rank_depois ?? '-') +
           statusCard('Última melhora', state.last_melhora_rank ?? '-') +
           statusCard('Amostras/concurso', state.samples || '-') +
+          statusCard('Histórico mínimo', state.min_history || '-') +
           statusCard('Tempo execução atual', state.elapsed_seconds_current_run ? Number(state.elapsed_seconds_current_run).toFixed(0) + 's' : '-') +
         '</div>' +
-        '<div class="exclusives"><strong>Como ler:</strong> rank menor e percentil maior indicam que a sequência real ficou melhor posicionada com os pesos aprendidos.</div>' +
+        '<div class="exclusives"><strong>Como ler:</strong> rank menor e percentil maior indicam que a sequência real ficou melhor posicionada com os pesos aprendidos. Concursos sem histórico mínimo são pulados para evitar olhar resultado futuro.</div>' +
         '<section class="comparison"><h2>Pesos atualmente aplicados no motor</h2>' + weightRows(activeWeights) + '</section>' +
+        '<section class="comparison"><h2>Evolução por blocos de concursos</h2>' + tableRows(blocks, [
+          {key: 'bloco', label: 'Bloco'},
+          {key: 'concursos', label: 'Concursos'},
+          {key: 'rank_antes_medio', label: 'Rank médio antes'},
+          {key: 'rank_depois_medio', label: 'Rank médio depois'},
+          {key: 'melhora_media', label: 'Melhora média'},
+          {key: 'percentil_depois_medio', label: 'Percentil depois'}
+        ]) + '</section>' +
+        '<section class="comparison"><h2>Melhores posicionamentos aprendidos</h2>' + tableRows(best, [
+          {key: 'concurso', label: 'Concurso'},
+          {key: 'rank_antes', label: 'Rank antes'},
+          {key: 'rank_depois', label: 'Rank depois'},
+          {key: 'melhora_rank', label: 'Melhora'},
+          {key: 'percentil_depois', label: 'Percentil depois'},
+          {key: 'jogo_real', label: 'Jogo real'}
+        ]) + '</section>' +
         '<section class="comparison"><h2>Últimos concursos aprendidos</h2>' + tableRows(recent, [
           {key: 'concurso', label: 'Concurso'},
           {key: 'rank_antes', label: 'Rank antes'},
