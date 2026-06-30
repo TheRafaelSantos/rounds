@@ -138,9 +138,7 @@ def _format_nums(nums: Sequence[int]) -> str:
 
 
 def _expanded_top_pool(top_count: int, requested_top_pool: int) -> int:
-    if int(top_count) < 50:
-        return int(requested_top_pool)
-    return min(TOTAL_COMBINATIONS, max(int(requested_top_pool), int(top_count) * 150))
+    return int(requested_top_pool)
 
 
 def _score_closeness(value: float, target: float, scale: float) -> float:
