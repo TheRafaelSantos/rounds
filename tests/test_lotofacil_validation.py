@@ -41,7 +41,7 @@ from lotofacil_analytics.selection_guard import build_number_guard_table, enrich
 from lotofacil_analytics.supervised_calibration import load_supervised_calibration_status, run_supervised_calibration
 from lotofacil_analytics.temporal_deep import build_temporal_deep_rows, temporal_deep_number_scores
 from lotofacil_analytics.top50_refinement_engine import load_top50_refinement_status, run_top50_refinement
-from lotofacil_analytics.top100_engine import build_top100_prediction, run_top100_backtest
+from lotofacil_analytics.top100_engine import build_top100_prediction, run_top100_backtest, select_top100_portfolio
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.transition_analysis import build_transition_model, build_transition_outputs, score_transition_candidate
 from lotofacil_analytics.validators import DataValidationError, validate_contest_record, validate_dataset
@@ -887,6 +887,8 @@ class LotofacilValidationTest(unittest.TestCase):
             saved = pd.read_csv(base / "top100.csv")
             self.assertIn("score_top100", saved.columns)
             self.assertIn("score_combinatorio_avancado", saved.columns)
+            self.assertIn("score_diversidade_top100", saved.columns)
+            self.assertIn("primeira_dezena_top100", saved.columns)
             self.assertTrue((base / "top100.md").exists())
             self.assertTrue((base / "top100.xlsx").exists())
 
@@ -910,6 +912,36 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertTrue((base / "bt.csv").exists())
             self.assertTrue((base / "bt_summary.csv").exists())
             self.assertTrue((base / "bt.xlsx").exists())
+
+    def test_top100_portfolio_diversifies_overused_numbers(self) -> None:
+        rows = []
+        base_numbers = list(range(2, 26))
+        for idx in range(25):
+            nums = [1] + [base_numbers[(idx + step) % len(base_numbers)] for step in range(14)]
+            rows.append(
+                {
+                    "nums": " ".join(f"{n:02d}" for n in sorted(nums)),
+                    "score_top100": 100.0 - idx * 0.01,
+                    "score_final": 100.0 - idx * 0.01,
+                }
+            )
+        for idx in range(25):
+            nums = [base_numbers[(idx + step) % len(base_numbers)] for step in range(15)]
+            rows.append(
+                {
+                    "nums": " ".join(f"{n:02d}" for n in sorted(nums)),
+                    "score_top100": 99.5 - idx * 0.01,
+                    "score_final": 99.5 - idx * 0.01,
+                }
+            )
+
+        selected = select_top100_portfolio(pd.DataFrame(rows), top_count=20, max_overlap=15)
+        count_with_one = sum(1 for text in selected["nums"] if "01" in str(text).split())
+
+        self.assertEqual(len(selected), 20)
+        self.assertLess(count_with_one, 20)
+        self.assertIn("score_diversidade_top100", selected.columns)
+        self.assertIn("primeira_dezena_top100", selected.columns)
 
     def test_top50_refinement_writes_outputs(self) -> None:
         rows = []
@@ -964,34 +996,38 @@ class LotofacilValidationTest(unittest.TestCase):
         self.assertIn("Lotofacil Analytics", html)
         self.assertIn("/api/status", html)
         self.assertNotIn("/api/calibration/status", html)
-        self.assertIn("/api/supervised/status", html)
-        self.assertIn("/api/transitions", html)
+        self.assertIn("/api/learning/status", html)
+        self.assertNotIn("/api/supervised/status", html)
+        self.assertNotIn("/api/transitions", html)
         self.assertIn("/api/climate", html)
-        self.assertIn("/api/predict", html)
-        self.assertIn("/api/predict-single", html)
-        self.assertIn("/api/mandel", html)
+        self.assertNotIn("/api/predict", html)
+        self.assertNotIn("/api/predict-single", html)
+        self.assertNotIn("/api/mandel", html)
         self.assertIn("/api/top100", html)
-        self.assertIn("/api/top100-backtest", html)
-        self.assertIn("/api/top50-refinement/status", html)
-        self.assertIn("/api/top50-refinement", html)
-        self.assertIn("/report", html)
-        self.assertIn("/mandel-report", html)
+        self.assertNotIn("/api/top100-backtest", html)
+        self.assertNotIn("/api/top50-refinement/status", html)
+        self.assertNotIn("/api/top50-refinement", html)
+        self.assertNotIn("/report", html)
+        self.assertNotIn("/mandel-report", html)
         self.assertIn("/top100-report", html)
-        self.assertIn("Comparação visual dos scores", html)
-        self.assertIn("Score climático", html)
-        self.assertIn("Temporal profundo", html)
-        self.assertIn("score_portfolio_jogo_2", html)
-        self.assertIn("Decisão protegida", html)
-        self.assertIn("Anti-falso-negativo", html)
         self.assertNotIn("Calibração 24/7", html)
+        self.assertIn("Aprendizado unificado", html)
         self.assertIn("Aprendizado supervisionado", html)
         self.assertIn("Progresso elegível", html)
         self.assertIn("Evolução por blocos de concursos", html)
         self.assertIn("Melhores posicionamentos aprendidos", html)
-        self.assertIn("Gerar Top 100", html)
-        self.assertIn("Backtest Top 100", html)
-        self.assertIn("Motor 3.0 Top50", html)
-        self.assertIn("Treinar Top50", html)
+        self.assertIn("Ranking 100 jogos", html)
+        self.assertIn("Top 100 completo", html)
+        self.assertIn("Primeira dezena", html)
+        self.assertIn("Score refinado", html)
+        self.assertIn("Refinador", html)
+        self.assertIn("Gerar 100 jogos", html)
+        self.assertNotIn("Gerar Top 100", html)
+        self.assertNotIn("Backtest Top 100", html)
+        self.assertNotIn("Motor 3.0 Top50", html)
+        self.assertNotIn("Treinar Top50", html)
+        self.assertNotIn("Gerar 2 jogos", html)
+        self.assertNotIn("Gerar jogo unico", html)
 
     def test_generate_games_balanceado_returns_requested_quantity(self) -> None:
         rows = []

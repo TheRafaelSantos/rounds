@@ -12,14 +12,10 @@ import pandas as pd
 
 from .climate_pipeline import ClimatePipeline
 from .config import AppConfig
-from .decision_layer_pipeline import DecisionLayerPipeline
-from .mandel_pipeline import MandelPipeline
 from .pipeline import LotofacilPipeline
-from .predictor_pipeline import PredictorPipeline
 from .supervised_calibration import load_supervised_calibration_status
 from .top50_refinement_pipeline import Top50RefinementPipeline
 from .top100_pipeline import Top100Pipeline
-from .transition_pipeline import TransitionPipeline
 
 
 def _html_page() -> str:
@@ -88,22 +84,11 @@ def _html_page() -> str:
   </header>
   <div class="toolbar">
     <button onclick="status()">Status</button>
-    <button onclick="updateBase()">Atualizar base</button>
-    <button onclick="transitions()">Analisar transições</button>
-    <button onclick="climate()">Atualizar clima</button>
-    <button onclick="predictSingle()">Gerar jogo unico</button>
-    <button onclick="predict()">Gerar 2 jogos</button>
-    <button onclick="top100()">Gerar Top 100</button>
-    <button onclick="top100Backtest()">Backtest Top 100</button>
-    <button onclick="top50RefinementStatus()">Motor 3.0 Top50</button>
-    <button onclick="top50RefinementRun()">Treinar Top50</button>
-    <button onclick="mandel()">Plano Mandel/bolão</button>
-    <button onclick="supervisedStatus()">Aprendizado supervisionado</button>
-    <button onclick="window.location='/report'">Baixar relatorio</button>
-    <button onclick="window.location='/single-report'">Baixar relatorio jogo unico</button>
-    <button onclick="window.location='/mandel-report'">Baixar relatorio Mandel</button>
-    <button onclick="window.location='/top100-report'">Baixar relatorio Top 100</button>
-    <button onclick="window.location='/top50-refinement-report'">Baixar refinador Top50</button>
+    <button onclick="updateBase()">Atualizar base incremental</button>
+    <button onclick="climate()">Atualizar clima incremental</button>
+    <button onclick="learning()">Aprendizado</button>
+    <button onclick="top100()">Gerar 100 jogos</button>
+    <button onclick="window.location='/top100-report'">Baixar Top 100</button>
   </div>
   <section class="games" id="games"></section>
   <pre id="output">Pronto.</pre>
@@ -129,117 +114,6 @@ def _html_page() -> str:
         '<div class="bar"><div class="' + fillClass + '" style="width:' + pct.toFixed(2) + '%"></div></div>' +
         '<div class="metric-value">' + number.toFixed(2) + '</div>' +
       '</div>';
-    }
-    function metaItem(label, value) {
-      if (value === undefined || value === null || value === '') {
-        return '';
-      }
-      return '<div class="meta-item"><span class="meta-label">' + escapeHtml(label) + '</span><span class="meta-value">' + escapeHtml(value) + '</span></div>';
-    }
-    function renderGameCard(title, row, fallbackNums, isSecond) {
-      const data = row || {};
-      const nums = data.nums || fallbackNums || '';
-      const criterio = data.criterio_selecao ? '<span class="tag">' + escapeHtml(data.criterio_selecao) + '</span>' : '';
-      const metrics = [
-        metricBar('Score final', data.score_final, false),
-        metricBar('Decisão protegida', data.score_decisao_protegida, true),
-        metricBar('Score contextual', data.score_contextual, false),
-        metricBar('Score climático', data.score_climatico, false),
-        metricBar('Temporal profundo', data.score_temporal_profundo, false),
-        metricBar('Contexto protegido', data.score_contexto_protegido, true),
-        metricBar('Score transição', data.score_transicao, false),
-        metricBar('Anti-falso-negativo', data.score_cobertura_risco_falso_negativo, true),
-        isSecond ? metricBar('Score portfólio', data.score_portfolio_jogo_2, true) : '',
-        isSecond ? metricBar('Diversidade vs Jogo 1', data.score_diversidade_jogo_2, true) : '',
-        isSecond ? metricBar('Força dos componentes', data.score_forca_componentes_jogo_2, true) : ''
-      ].join('');
-      const exclusives = isSecond && data.dezenas_exclusivas_jogo_2
-        ? '<div class="exclusives"><strong>Dezenas exclusivas do Jogo 2:</strong> ' + escapeHtml(data.dezenas_exclusivas_jogo_2) + '</div>'
-        : '';
-      const risk = data.dezenas_risco_falso_negativo
-        ? '<div class="exclusives"><strong>Dezenas de risco protegidas:</strong> ' + escapeHtml(data.dezenas_risco_falso_negativo) + '</div>'
-        : '';
-      return '<article class="game">' +
-        '<div class="game-head"><h2>' + escapeHtml(title) + '</h2>' + criterio + '</div>' +
-        '<div class="numbers">' + escapeHtml(nums) + '</div>' +
-        '<div class="meta">' +
-          metaItem('Rank', data.rank) +
-          metaItem('Overlap Jogo 1', data.overlap_com_jogo_1) +
-          metaItem('Únicas vs Jogo 1', data.dezenas_unicas_vs_jogo_1) +
-          metaItem('Soma', data.soma) +
-          metaItem('Pares', data.qtd_pares) +
-          metaItem('Repetidas último', data.overlap_ultimo) +
-          metaItem('Risco falso negativo', data.qtd_dezenas_risco_falso_negativo) +
-        '</div>' +
-        '<div class="metrics">' + metrics + '</div>' +
-        risk +
-        exclusives +
-      '</article>';
-    }
-    function compareCell(value) {
-      const number = scoreValue(value);
-      if (number === null) {
-        return '<div class="compare-empty">-</div>';
-      }
-      const pct = Math.max(0, Math.min(100, number));
-      return '<div class="compare-cell"><div class="bar"><div class="bar-fill" style="width:' + pct.toFixed(2) + '%"></div></div><div class="metric-value">' + number.toFixed(2) + '</div></div>';
-    }
-    function compareRow(label, first, second) {
-      return '<div class="compare-row">' +
-        '<div class="compare-title">' + escapeHtml(label) + '</div>' +
-        compareCell(first) +
-        compareCell(second) +
-      '</div>';
-    }
-    function renderComparison(rows) {
-      if (!Array.isArray(rows) || rows.length < 2) {
-        return '';
-      }
-      const first = rows[0] || {};
-      const second = rows[1] || {};
-      return '<section class="comparison">' +
-        '<h2>Comparação visual dos scores</h2>' +
-        '<div class="compare-grid">' +
-          compareRow('Score final', first.score_final, second.score_final) +
-          compareRow('Decisão protegida', first.score_decisao_protegida, second.score_decisao_protegida) +
-          compareRow('Score contextual', first.score_contextual, second.score_contextual) +
-          compareRow('Score climático', first.score_climatico, second.score_climatico) +
-          compareRow('Temporal profundo', first.score_temporal_profundo, second.score_temporal_profundo) +
-          compareRow('Contexto protegido', first.score_contexto_protegido, second.score_contexto_protegido) +
-          compareRow('Score transição', first.score_transicao, second.score_transicao) +
-          compareRow('Anti-falso-negativo', first.score_cobertura_risco_falso_negativo, second.score_cobertura_risco_falso_negativo) +
-          compareRow('Score portfólio', null, second.score_portfolio_jogo_2) +
-        '</div>' +
-      '</section>';
-    }
-    function renderMandel(data) {
-      const plan = Array.isArray(data.plan) ? data.plan : [];
-      const preview = Array.isArray(data.games_preview) ? data.games_preview : [];
-      const rows = plan.map(function(item) {
-        return '<div class="compare-row">' +
-          '<div class="compare-title">' + escapeHtml(item.tamanho_universo) + ' dezenas</div>' +
-          '<div>' + escapeHtml(item.jogos_desdobramento_completo) + ' jogos</div>' +
-          '<div>R$ ' + Number(item.custo_desdobramento_completo || 0).toLocaleString('pt-BR', {minimumFractionDigits: 2}) + '</div>' +
-        '</div>';
-      }).join('');
-      const previewRows = preview.map(function(item) {
-        return '<div class="exclusives"><strong>Jogo ' + escapeHtml(item.jogo) + ':</strong> ' + escapeHtml(item.nums) + '</div>';
-      }).join('');
-      return '<article class="game">' +
-        '<div class="game-head"><h2>Plano Mandel/bolão</h2><span class="tag">desdobramento</span></div>' +
-        '<div class="numbers">' + escapeHtml(data.universo_recomendado || '') + '</div>' +
-        '<div class="meta">' +
-          metaItem('Concurso', data.concurso_alvo) +
-          metaItem('Universo', data.tamanho_universo) +
-          metaItem('Completo', data.jogos_desdobramento_completo + ' jogos') +
-          metaItem('Custo completo', 'R$ ' + Number(data.custo_desdobramento_completo || 0).toLocaleString('pt-BR', {minimumFractionDigits: 2})) +
-          metaItem('Reduzido', data.jogos_fechamento_reduzido + ' jogos') +
-          metaItem('Custo reduzido', 'R$ ' + Number(data.custo_fechamento_reduzido || 0).toLocaleString('pt-BR', {minimumFractionDigits: 2})) +
-        '</div>' +
-        '<div class="exclusives"><strong>Garantia:</strong> ' + escapeHtml(data.garantia_fechamento_reduzido || '') + '</div>' +
-      '</article>' +
-      '<section class="comparison"><h2>Custos por universo</h2><div class="compare-grid">' + rows + '</div></section>' +
-      '<section class="comparison"><h2>Primeiros jogos do fechamento</h2>' + previewRows + '</section>';
     }
     function statusCard(label, value) {
       return '<div class="status-card"><span class="status-label">' + escapeHtml(label) + '</span><span class="status-value">' + escapeHtml(value ?? '-') + '</span></div>';
@@ -335,7 +209,7 @@ def _html_page() -> str:
         return '';
       }
       return '<section class="calibration-panel">' +
-        '<div class="game-head"><h2>Ranking Top 100 / Top 50</h2><span class="tag">' + escapeHtml(data.metodo || 'top100') + '</span></div>' +
+        '<div class="game-head"><h2>Ranking 100 jogos</h2><span class="tag">' + escapeHtml(data.metodo || 'top100') + '</span></div>' +
         '<div class="status-grid">' +
           statusCard('Concurso alvo', data.concurso_alvo || '-') +
           statusCard('Data concurso', data.data_proximo_concurso || '-') +
@@ -346,6 +220,7 @@ def _html_page() -> str:
           {key: 'rank_top100', label: 'Rank'},
           {key: 'nums', label: 'Jogo'},
           {key: 'grupo_top', label: 'Grupo'},
+          {key: 'primeira_dezena_top100', label: 'Primeira dezena'},
           {key: 'score_top100', label: 'Score Top 100'},
           {key: 'score_final', label: 'Score base'},
           {key: 'score_combinatorio_avancado', label: 'Comb. avançado'},
@@ -353,35 +228,14 @@ def _html_page() -> str:
           {key: 'score_complemento_ausentes', label: 'Complemento'},
           {key: 'score_detector_falso_positivo', label: 'Anti falso positivo'}
         ]) + '</section>' +
-        '<section class="comparison"><h2>Top 50 primeiros registros</h2>' + tableRows(rows.slice(0, 50), [
+        '<section class="comparison"><h2>Top 100 completo</h2>' + tableRows(rows.slice(0, 100), [
           {key: 'rank_top100', label: 'Rank'},
           {key: 'nums', label: 'Jogo'},
+          {key: 'primeira_dezena_top100', label: 'Primeira dezena'},
           {key: 'score_top100', label: 'Score Top 100'},
+          {key: 'score_top50_refinado', label: 'Score refinado'},
+          {key: 'refinador_top50_aplicado', label: 'Refinador'},
           {key: 'criterio_top100', label: 'Critério'}
-        ]) + '</section>' +
-      '</section>';
-    }
-    function renderTop100Backtest(data) {
-      const rows = Array.isArray(data.results) ? data.results : [];
-      const summary = data.summary || {};
-      return '<section class="calibration-panel">' +
-        '<div class="game-head"><h2>Backtest Top 100 / Top 50</h2><span class="tag">walk-forward</span></div>' +
-        '<div class="status-grid">' +
-          statusCard('Concursos avaliados', summary.concursos_avaliados || data.concursos_avaliados || '-') +
-          statusCard('Hits Top 10', summary.hit_top10 ?? data.hit_top10 ?? '-') +
-          statusCard('Hits Top 50', summary.hit_top50 ?? data.hit_top50 ?? '-') +
-          statusCard('Hits Top 100', summary.hit_top100 ?? data.hit_top100 ?? '-') +
-          statusCard('Taxa Top 50', summary.taxa_top50 !== undefined ? Number(summary.taxa_top50).toFixed(2) + '%' : '-') +
-          statusCard('Taxa Top 100', summary.taxa_top100 !== undefined ? Number(summary.taxa_top100).toFixed(2) + '%' : '-') +
-          statusCard('Rank diagnóstico médio', summary.rank_diagnostico_medio || data.rank_diagnostico_medio || '-') +
-        '</div>' +
-        '<section class="comparison"><h2>Últimos resultados avaliados</h2>' + tableRows(rows.slice(-20), [
-          {key: 'concurso', label: 'Concurso'},
-          {key: 'jogo_real', label: 'Jogo real'},
-          {key: 'hit_top10', label: 'Top 10'},
-          {key: 'hit_top50', label: 'Top 50'},
-          {key: 'hit_top100', label: 'Top 100'},
-          {key: 'rank_diagnostico_com_gabarito', label: 'Rank diagnóstico'}
         ]) + '</section>' +
       '</section>';
     }
@@ -459,6 +313,28 @@ def _html_page() -> str:
         ]) + '</section>' +
       '</section>';
     }
+    function renderLearning(data) {
+      const supervised = data.supervised || {};
+      const top50 = data.top50 || {};
+      const supervisedState = supervised.state || {};
+      const top50State = top50.state || {};
+      return '<section class="calibration-panel">' +
+        '<div class="game-head"><h2>Aprendizado unificado</h2><span class="tag">motor 3.0</span></div>' +
+        '<div class="status-grid">' +
+          statusCard('Supervisionado', supervisedState.status || '-') +
+          statusCard('Supervisionado progresso', supervisedState.progress_percent !== undefined ? Number(supervisedState.progress_percent).toFixed(2) + '%' : '-') +
+          statusCard('Supervisionado rank depois', supervisedState.rank_after_avg ?? '-') +
+          statusCard('Top50', top50State.status || '-') +
+          statusCard('Top50 progresso', top50State.progress_percent !== undefined ? Number(top50State.progress_percent).toFixed(2) + '%' : '-') +
+          statusCard('Top50 rank refinado', top50State.rank_after_avg ?? '-') +
+          statusCard('Top50 Hit@50', top50State.hit_top50_after !== undefined ? Number(top50State.hit_top50_after).toFixed(2) + '%' : '-') +
+          statusCard('Top50 Hit@100', top50State.hit_top100_after !== undefined ? Number(top50State.hit_top100_after).toFixed(2) + '%' : '-') +
+        '</div>' +
+        '<div class="exclusives"><strong>Como ler:</strong> este botão centraliza todos os aprendizados. Os serviços 24/7 continuam treinando por trás; aqui você acompanha o estado consolidado sem precisar escolher entre painéis separados.</div>' +
+      '</section>' +
+      renderSupervised(supervised) +
+      renderTop50Refinement(top50);
+    }
     async function request(path, options) {
       const output = document.getElementById('output');
       output.textContent = 'Processando...';
@@ -468,62 +344,15 @@ def _html_page() -> str:
       return data;
     }
     async function status() { await request('/api/status'); }
-    async function supervisedStatus() {
-      const data = await request('/api/supervised/status');
-      document.getElementById('games').innerHTML = renderSupervised(data);
-    }
     async function updateBase() { await request('/api/update', {method: 'POST'}); }
-    async function transitions() { await request('/api/transitions', {method: 'POST'}); }
     async function climate() { await request('/api/climate', {method: 'POST'}); }
-    async function mandel() {
-      const data = await request('/api/mandel', {method: 'POST'});
-      const games = document.getElementById('games');
-      if (data.universo_recomendado) {
-        games.innerHTML = renderMandel(data);
-      } else {
-        games.innerHTML = '';
-      }
-    }
-    async function predict() {
-      const data = await request('/api/predict', {method: 'POST'});
-      const games = document.getElementById('games');
-      const rows = Array.isArray(data.games) ? data.games : [];
-      if (data.jogo_1) {
-        const row1 = rows[0] || {nums: data.jogo_1};
-        const row2 = rows[1] || {nums: data.jogo_2};
-        games.innerHTML = '<div class="game-grid">' +
-          renderGameCard('Jogo 1', row1, data.jogo_1, false) +
-          renderGameCard('Jogo 2', row2, data.jogo_2, true) +
-        '</div>' + renderComparison([row1, row2]);
-      } else {
-        games.innerHTML = '';
-      }
-    }
-    async function predictSingle() {
-      const data = await request('/api/predict-single', {method: 'POST'});
-      const games = document.getElementById('games');
-      const row = data.game || {};
-      if (data.jogo_unico) {
-        games.innerHTML = '<div class="game-grid">' + renderGameCard('Jogo unico', row, data.jogo_unico, false) + '</div>';
-      } else {
-        games.innerHTML = '';
-      }
+    async function learning() {
+      const data = await request('/api/learning/status');
+      document.getElementById('games').innerHTML = renderLearning(data);
     }
     async function top100() {
       const data = await request('/api/top100', {method: 'POST'});
       document.getElementById('games').innerHTML = renderTop100(data);
-    }
-    async function top100Backtest() {
-      const data = await request('/api/top100-backtest', {method: 'POST'});
-      document.getElementById('games').innerHTML = renderTop100Backtest(data);
-    }
-    async function top50RefinementStatus() {
-      const data = await request('/api/top50-refinement/status');
-      document.getElementById('games').innerHTML = renderTop50Refinement(data);
-    }
-    async function top50RefinementRun() {
-      const data = await request('/api/top50-refinement', {method: 'POST'});
-      document.getElementById('games').innerHTML = renderTop50Refinement(data.status || data);
     }
   </script>
 </body>
@@ -591,58 +420,19 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
             if self.path == "/api/status":
                 self._handle_json(lambda: LotofacilPipeline(config=config, logger=logger).status().__dict__)
                 return
-            if self.path == "/api/supervised/status":
+            if self.path == "/api/learning/status":
                 self._handle_json(
-                    lambda: load_supervised_calibration_status(
-                        state_json_path=config.supervised_calibration_state_json_path,
-                        results_csv_path=config.supervised_calibration_results_csv_path,
-                        summary_csv_path=config.supervised_calibration_summary_csv_path,
-                        weights_csv_path=config.supervised_calibration_weights_csv_path,
-                        weights_json_path=config.supervised_calibration_weights_json_path,
-                    )
+                    lambda: {
+                        "supervised": load_supervised_calibration_status(
+                            state_json_path=config.supervised_calibration_state_json_path,
+                            results_csv_path=config.supervised_calibration_results_csv_path,
+                            summary_csv_path=config.supervised_calibration_summary_csv_path,
+                            weights_csv_path=config.supervised_calibration_weights_csv_path,
+                            weights_json_path=config.supervised_calibration_weights_json_path,
+                        ),
+                        "top50": Top50RefinementPipeline(config=config, logger=logger).status(),
+                    }
                 )
-                return
-            if self.path == "/api/top50-refinement/status":
-                self._handle_json(lambda: Top50RefinementPipeline(config=config, logger=logger).status())
-                return
-            if self.path == "/report":
-                report_path = config.prediction_report_path
-                if not report_path.exists():
-                    _json_response(self, HTTPStatus.NOT_FOUND, {"error": "relatorio ainda nao gerado; use Gerar 2 jogos primeiro"})
-                    return
-                body = report_path.read_bytes()
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "text/markdown; charset=utf-8")
-                self.send_header("Content-Disposition", 'attachment; filename="lotofacil_prediction_report.md"')
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
-            if self.path == "/single-report":
-                report_path = config.single_prediction_report_path
-                if not report_path.exists():
-                    _json_response(self, HTTPStatus.NOT_FOUND, {"error": "relatorio ainda nao gerado; use Gerar jogo unico primeiro"})
-                    return
-                body = report_path.read_bytes()
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "text/markdown; charset=utf-8")
-                self.send_header("Content-Disposition", 'attachment; filename="lotofacil_prediction_single_report.md"')
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
-            if self.path == "/mandel-report":
-                report_path = config.mandel_report_path
-                if not report_path.exists():
-                    _json_response(self, HTTPStatus.NOT_FOUND, {"error": "relatorio ainda nao gerado; use Plano Mandel/bolao primeiro"})
-                    return
-                body = report_path.read_bytes()
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "text/markdown; charset=utf-8")
-                self.send_header("Content-Disposition", 'attachment; filename="lotofacil_mandel_report.md"')
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
                 return
             if self.path == "/top100-report":
                 report_path = config.top100_prediction_report_path
@@ -657,84 +447,14 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            if self.path == "/top50-refinement-report":
-                report_path = config.top50_refinement_excel_path
-                if not report_path.exists():
-                    _json_response(self, HTTPStatus.NOT_FOUND, {"error": "refinador ainda nao gerou Excel; use Treinar Top50 primeiro"})
-                    return
-                body = report_path.read_bytes()
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                self.send_header("Content-Disposition", 'attachment; filename="lotofacil_top50_refinement.xlsx"')
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})
 
         def do_POST(self) -> None:
             if self.path == "/api/update":
                 self._handle_json(lambda: {"message": LotofacilPipeline(config=config, logger=logger).update(force_full=False).to_console()})
                 return
-            if self.path == "/api/transitions":
-                self._handle_json(lambda: TransitionPipeline(config=config, logger=logger).run().__dict__)
-                return
             if self.path == "/api/climate":
                 self._handle_json(lambda: ClimatePipeline(config=config, logger=logger).run(draw_hour=20, draw_minute=0).__dict__)
-                return
-            if self.path == "/api/mandel":
-                def mandel_payload() -> dict:
-                    summary = MandelPipeline(config=config, logger=logger).run(
-                        universe_size=18,
-                        guarantee_hits=14,
-                        max_reduced_games=80,
-                        draw_hour=20,
-                        draw_minute=0,
-                    )
-                    payload = summary.__dict__.copy()
-                    payload["plan"] = _read_csv_records(config.mandel_plan_csv_path)
-                    payload["games_preview"] = _read_csv_records(config.mandel_games_csv_path)[:20]
-                    return payload
-
-                self._handle_json(mandel_payload)
-                return
-            if self.path == "/api/predict":
-                def predict_payload() -> dict:
-                    summary = PredictorPipeline(config=config, logger=logger).predict(
-                        seed=123,
-                        candidate_pool=10000,
-                        top_games=100,
-                        generations=20,
-                        population=80,
-                        max_overlap=8,
-                        engine="exaustivo",
-                    )
-                    payload = summary.__dict__.copy()
-                    payload["games"] = _read_csv_records(config.prediction_csv_path)
-                    return payload
-
-                self._handle_json(predict_payload)
-                return
-            if self.path == "/api/predict-single":
-                def predict_single_payload() -> dict:
-                    summary = DecisionLayerPipeline(config=config, logger=logger).predict_single(
-                        seed=123,
-                        candidate_pool=10000,
-                        top_games=100,
-                        generations=20,
-                        population=80,
-                        draw_hour=20,
-                        draw_minute=0,
-                        engine="exaustivo",
-                        exhaustive_limit=None,
-                        weight_profile="padrao_atual",
-                    )
-                    payload = summary.__dict__.copy()
-                    rows = _read_csv_records(config.single_prediction_csv_path)
-                    payload["game"] = rows[0] if rows else {}
-                    return payload
-
-                self._handle_json(predict_single_payload)
                 return
             if self.path == "/api/top100":
                 def top100_payload() -> dict:
@@ -751,44 +471,6 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                     return payload
 
                 self._handle_json(top100_payload)
-                return
-            if self.path == "/api/top100-backtest":
-                def top100_backtest_payload() -> dict:
-                    summary = Top100Pipeline(config=config, logger=logger).backtest(
-                        n_eval=5,
-                        min_history=300,
-                        top_count=100,
-                        top_pool=2000,
-                        max_overlap=13,
-                        draw_hour=20,
-                        draw_minute=0,
-                        exhaustive_limit=50000,
-                    )
-                    payload = summary.__dict__.copy()
-                    payload["results"] = _read_csv_records(config.top100_backtest_csv_path)
-                    payload["summary"] = summary.__dict__.copy()
-                    return payload
-
-                self._handle_json(top100_backtest_payload)
-                return
-            if self.path == "/api/top50-refinement":
-                def top50_refinement_payload() -> dict:
-                    pipeline = Top50RefinementPipeline(config=config, logger=logger)
-                    summary = pipeline.run(
-                        from_concurso=1,
-                        to_concurso=None,
-                        max_contests=1,
-                        min_history=300,
-                        top_pool=500,
-                        exhaustive_limit=10000,
-                        seed=123,
-                        draw_hour=20,
-                        draw_minute=0,
-                        reset=False,
-                    )
-                    return {"summary": summary.__dict__.copy(), "status": pipeline.status()}
-
-                self._handle_json(top50_refinement_payload)
                 return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})
 
