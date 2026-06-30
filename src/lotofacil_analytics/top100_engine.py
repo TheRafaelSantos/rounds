@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -448,6 +449,111 @@ def _safe_float(row: Mapping[str, object], column: str, default: float = 0.0) ->
     return float(default) if pd.isna(out) else out
 
 
+def _recent_low_frequency_numbers(concursos: pd.DataFrame, *, window: int = 30) -> List[int]:
+    if concursos.empty:
+        return list(NUMBERS)
+    df = concursos.copy().sort_values("concurso").tail(int(window))
+    counts: Counter[int] = Counter()
+    for _, row in df.iterrows():
+        counts.update(_nums_from_row(row))
+    return [n for n, _count in sorted(((n, counts.get(n, 0)) for n in NUMBERS), key=lambda item: (item[1], item[0]))]
+
+
+def _balanced_random_combo(rng: random.Random, *, forced: Sequence[int] = (), excluded: Sequence[int] = ()) -> Tuple[int, ...]:
+    forced_set = {int(n) for n in forced}
+    excluded_set = {int(n) for n in excluded} - forced_set
+    available = [n for n in NUMBERS if n not in forced_set and n not in excluded_set]
+    if len(forced_set) > 15 or len(available) < 15 - len(forced_set):
+        available = [n for n in NUMBERS if n not in forced_set]
+    for _attempt in range(250):
+        nums = sorted(forced_set | set(rng.sample(available, 15 - len(forced_set))))
+        even_count = sum(1 for n in nums if n % 2 == 0)
+        total = sum(nums)
+        rows, cols = _grid_counts(nums)
+        if 5 <= even_count <= 9 and 165 <= total <= 225 and max(rows) <= 4 and max(cols) <= 4:
+            return tuple(nums)
+    return tuple(sorted(forced_set | set(rng.sample(available, 15 - len(forced_set)))))
+
+
+def _build_coverage_hedge_candidates(
+    concursos: pd.DataFrame,
+    existing_nums: Sequence[str],
+    *,
+    top_count: int,
+) -> pd.DataFrame:
+    if int(top_count) < 50:
+        return pd.DataFrame()
+    existing = {str(value) for value in existing_nums}
+    low_recent = _recent_low_frequency_numbers(concursos, window=30)
+    last_concurso = int(concursos["concurso"].max()) if not concursos.empty else 0
+    rng = random.Random(730000 + last_concurso)
+    target_rows = max(1200, int(top_count) * 30)
+    rows: List[Dict[str, object]] = []
+    seen = set(existing)
+    attempts = 0
+    while len(rows) < target_rows and attempts < target_rows * 40:
+        attempts += 1
+        scenario = attempts % 6
+        forced: List[int] = []
+        excluded: List[int] = []
+        score_bonus = 0.0
+        label = "coverage_balanceado"
+        if scenario == 0:
+            excluded = [1]
+            score_bonus = 2.6
+            label = "coverage_sem_01"
+        elif scenario == 1:
+            excluded = [1, 22, 24, 25]
+            forced = rng.sample(low_recent[:10], 3)
+            score_bonus = 2.2
+            label = "coverage_contrarian"
+        elif scenario == 2:
+            forced = rng.sample(low_recent[:12], 5)
+            score_bonus = 2.0
+            label = "coverage_baixa_freq_recente"
+        elif scenario == 3:
+            excluded = rng.sample([1, 21, 22, 24, 25], 2)
+            forced = rng.sample(low_recent[:14], 4)
+            score_bonus = 1.8
+            label = "coverage_anti_saturacao"
+        elif scenario == 4:
+            excluded = [1]
+            forced = rng.sample([n for n in low_recent[:16] if n != 1], 4)
+            score_bonus = 2.4
+            label = "coverage_sem_01_baixa_freq"
+        combo = _balanced_random_combo(rng, forced=forced, excluded=excluded)
+        nums_text = _format_nums(combo)
+        if nums_text in seen:
+            continue
+        seen.add(nums_text)
+        score_final = round(70.0 + score_bonus + rng.random() * 2.5, 6)
+        rows.append(
+            {
+                "rank": 900000 + len(rows) + 1,
+                "nums": nums_text,
+                "score_final": score_final,
+                "score_estatistico": score_final,
+                "score_historico": 58.0 + score_bonus,
+                "score_atraso": 62.0 + score_bonus,
+                "score_combinatorio": 58.0,
+                "score_localidade_numerologia": 50.0,
+                "score_contextual": 50.0,
+                "score_climatico": 50.0,
+                "score_temporal_profundo": 54.0,
+                "score_cenarios": 58.0,
+                "score_contrarian": 74.0 + score_bonus,
+                "score_transicao": 54.0,
+                "score_decisao_protegida": score_final,
+                "score_cobertura_risco_falso_negativo": 68.0 + score_bonus,
+                "score_weights": "coverage_hedge",
+                "source_model": label,
+                "metodo": label,
+                "concurso_base_final": last_concurso,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def enrich_candidates_with_top100_scores(
     candidates: pd.DataFrame,
     concursos: pd.DataFrame,
@@ -778,7 +884,10 @@ def build_top100_prediction(
             climate_features=climate_features,
             target_climate=target_climate,
         )
-    enriched = enrich_candidates_with_top100_scores(candidates.head(int(analysis_pool)), df, refinement_payload=refinement_payload)
+    base_pool = candidates.head(int(analysis_pool)).copy()
+    hedge_pool = _build_coverage_hedge_candidates(df, base_pool["nums"].astype(str).tolist() if "nums" in base_pool.columns else [], top_count=int(top_count))
+    scored_pool = pd.concat([base_pool, hedge_pool], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
+    enriched = enrich_candidates_with_top100_scores(scored_pool, df, refinement_payload=refinement_payload)
     final_games = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
     generated_at = datetime.now().isoformat(timespec="seconds")
     final_games.insert(0, "generated_at", generated_at)
@@ -890,7 +999,14 @@ def run_top100_backtest(
             climate_features=climate_features,
             target_climate=target_climate,
         )
-        enriched = enrich_candidates_with_top100_scores(candidates.head(int(analysis_pool)), train_df, refinement_payload=refinement_payload)
+        base_pool = candidates.head(int(analysis_pool)).copy()
+        hedge_pool = _build_coverage_hedge_candidates(
+            train_df,
+            base_pool["nums"].astype(str).tolist() if "nums" in base_pool.columns else [],
+            top_count=int(top_count),
+        )
+        scored_pool = pd.concat([base_pool, hedge_pool], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
+        enriched = enrich_candidates_with_top100_scores(scored_pool, train_df, refinement_payload=refinement_payload)
         selected = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
         selected_nums = set(str(value) for value in selected["nums"].tolist())
         actual_row = _actual_candidate_row(
