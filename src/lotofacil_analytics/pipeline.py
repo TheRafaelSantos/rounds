@@ -10,7 +10,7 @@ import pandas as pd
 
 from .caixa_client import CaixaLotofacilClient
 from .config import AppConfig
-from .normalize import normalize_contest
+from .normalize import normalize_contest, parse_int_list
 from .storage import (
     ensure_dirs,
     list_raw_files,
@@ -154,6 +154,73 @@ class LotofacilPipeline:
             df=df,
             fetched=len(fetched_payloads),
             message="Base atualizada e validada.",
+        )
+
+    def append_manual_result(
+        self,
+        *,
+        concurso: int,
+        data_sorteio: str,
+        data_proximo_concurso: str,
+        dezenas: str,
+        local_sorteio: str = "ESPAÇO DA SORTE",
+        cidade_sorteio: str = "SÃO PAULO",
+        uf_sorteio: str = "SP",
+    ) -> PipelineSummary:
+        ensure_dirs([self.config.raw_dir, self.config.processed_dir, self.config.exports_dir, self.config.logs_dir])
+        concurso = int(concurso)
+        parsed = parse_int_list(str(dezenas).replace(",", " ").replace("-", " ").split(), expected=15, min_value=1, max_value=25)
+        existing_df = load_processed_csv(self.config.processed_csv_path)
+        if not existing_df.empty and concurso in set(pd.to_numeric(existing_df["concurso"], errors="coerce").dropna().astype(int)):
+            current = existing_df[pd.to_numeric(existing_df["concurso"], errors="coerce").astype("Int64") == concurso].iloc[0]
+            current_nums = sorted(int(current[col]) for col in [f"d{i:02d}" for i in range(1, 16)])
+            if current_nums != sorted(parsed):
+                raise ValueError(f"Concurso {concurso} ja existe com dezenas diferentes: {current_nums}")
+            df = self._build_dataframe_from_existing_or_raw(existing_df)
+            latest_remote = max(int(df["concurso"].max()), concurso)
+            self._save_outputs_and_state(df, latest_remote=latest_remote, fetched=0)
+            return self._summary(
+                action="append-result",
+                latest_remote=latest_remote,
+                df=df,
+                fetched=0,
+                message=f"Concurso {concurso} ja existia com as mesmas dezenas; nada foi alterado.",
+            )
+
+        payload: Dict[str, Any] = {
+            "numero": concurso,
+            "dataApuracao": data_sorteio,
+            "dataProximoConcurso": data_proximo_concurso,
+            "tipoJogo": "LOTOFACIL",
+            "acumulado": None,
+            "localSorteio": local_sorteio,
+            "nomeMunicipioUFSorteio": f"{cidade_sorteio}, {uf_sorteio}",
+            "indicadorConcursoEspecial": 1,
+            "listaDezenas": [f"{n:02d}" for n in sorted(parsed)],
+            "dezenasSorteadasOrdemSorteio": [f"{n:02d}" for n in parsed],
+            "listaRateioPremio": [],
+            "valorArrecadado": None,
+            "valorAcumuladoProximoConcurso": None,
+            "valorEstimadoProximoConcurso": None,
+            "valorAcumuladoConcursoEspecial": None,
+            "valorTotalPremioFaixaUm": None,
+            "observacao": "resultado anexado manualmente porque a API remota ainda nao retornou o concurso",
+        }
+        records = existing_df.to_dict(orient="records") if not existing_df.empty else []
+        save_raw_payload(self.config.raw_dir, payload)
+        raw_path = self.config.raw_dir / f"concurso_{concurso:06d}.json"
+        record = normalize_contest(payload, raw_json_file=str(raw_path.relative_to(self.config.base_dir)))
+        records.append(record)
+        rows = validate_dataset(records, require_contiguous=True)
+        df = records_to_dataframe(rows)
+        latest_remote = max(int(df["concurso"].max()), concurso)
+        self._save_outputs_and_state(df, latest_remote=latest_remote, fetched=1)
+        return self._summary(
+            action="append-result",
+            latest_remote=latest_remote,
+            df=df,
+            fetched=1,
+            message=f"Concurso {concurso} anexado manualmente e base revalidada.",
         )
 
     def _records_from_all_raw(self) -> List[Dict[str, Any]]:

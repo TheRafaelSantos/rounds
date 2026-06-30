@@ -82,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--refine-top50", action="store_true", help="Roda Motor 3.0 Refinador Top50 pos-erro contra hard negatives historicos.")
     mode.add_argument("--top100", action="store_true", help="Gera ranking Top 100 / Top 50 com estudos avancados.")
     mode.add_argument("--top100-backtest", action="store_true", help="Valida historicamente o ranking Top 100 / Top 50.")
+    mode.add_argument("--append-result", action="store_true", help="Anexa manualmente um resultado quando a API remota ainda nao retornou o concurso.")
     mode.add_argument("--analyze-result", action="store_true", help="Analisa resultado real contra os jogos previstos.")
     mode.add_argument("--final-backtest", action="store_true", help="Executa backtest do score final completo contra aleatorio.")
     mode.add_argument("--export", action="store_true", help="Gera Excel consolidado com as abas do briefing.")
@@ -148,6 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--actual-numbers", default=None, help="15 dezenas sorteadas para --analyze-result.")
     parser.add_argument("--result-label", default="resultado", help="Rotulo do resultado analisado.")
     parser.add_argument("--result-concurso", type=int, default=None, help="Numero do concurso analisado em --analyze-result.")
+    parser.add_argument("--result-date", default=None, help="Data do sorteio em YYYY-MM-DD ou DD/MM/YYYY para --append-result.")
+    parser.add_argument("--next-date", default=None, help="Data do proximo sorteio em YYYY-MM-DD ou DD/MM/YYYY para --append-result.")
     parser.add_argument("--prediction-file", default=None, help="CSV de previsao a comparar; se omitido, usa a previsao padrao.")
     parser.add_argument("--final-n-eval", type=int, default=60, help="Concursos finais avaliados em --final-backtest.")
     parser.add_argument("--final-candidate-pool", type=int, default=2500, help="Candidatos por concurso no --final-backtest.")
@@ -155,7 +158,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--final-population", type=int, default=40, help="Populacao por concurso no --final-backtest.")
     parser.add_argument("--top100-count", type=int, default=100, help="Quantidade de jogos no ranking --top100.")
     parser.add_argument("--top100-pool", type=int, default=10000, help="Quantidade de candidatos fortes reordenados pelo --top100.")
-    parser.add_argument("--top100-max-overlap", type=int, default=13, help="Overlap maximo inicial entre jogos do portfolio Top 100.")
+    parser.add_argument("--top100-max-overlap", type=int, default=11, help="Overlap maximo inicial entre jogos do portfolio Top 100.")
     parser.add_argument("--top100-n-eval", type=int, default=20, help="Concursos finais avaliados no --top100-backtest.")
     parser.add_argument("--top100-exhaustive-limit", type=int, default=0, help="Limite tecnico de combinacoes no Top 100; 0 avalia todas.")
     parser.add_argument("--host", default="127.0.0.1", help="Host da interface web local.")
@@ -200,6 +203,7 @@ def main() -> int:
         or args.refine_top50
         or args.top100
         or args.top100_backtest
+        or args.append_result
         or args.analyze_result
         or args.final_backtest
         or args.export
@@ -225,6 +229,21 @@ def main() -> int:
             return 0
         if args.build_exe:
             summary = build_executable(config.base_dir)
+        elif args.append_result:
+            if not args.result_concurso:
+                raise ValueError("Informe --result-concurso para --append-result.")
+            if not args.result_date:
+                raise ValueError("Informe --result-date para --append-result.")
+            if not args.next_date:
+                raise ValueError("Informe --next-date para --append-result.")
+            if not args.actual_numbers:
+                raise ValueError("Informe --actual-numbers com as 15 dezenas para --append-result.")
+            summary = pipeline.append_manual_result(
+                concurso=args.result_concurso,
+                data_sorteio=args.result_date,
+                data_proximo_concurso=args.next_date,
+                dezenas=args.actual_numbers,
+            )
         elif args.analyze_result:
             if not args.actual_numbers:
                 raise ValueError("Informe --actual-numbers com as 15 dezenas sorteadas.")

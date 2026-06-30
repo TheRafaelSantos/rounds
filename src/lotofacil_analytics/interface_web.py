@@ -461,7 +461,7 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                     summary = Top100Pipeline(config=config, logger=logger).predict(
                         top_count=100,
                         top_pool=10000,
-                        max_overlap=13,
+                        max_overlap=11,
                         draw_hour=20,
                         draw_minute=0,
                         exhaustive_limit=None,

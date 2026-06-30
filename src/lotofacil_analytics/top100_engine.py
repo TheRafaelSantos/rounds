@@ -137,6 +137,12 @@ def _format_nums(nums: Sequence[int]) -> str:
     return " ".join(f"{int(n):02d}" for n in sorted(nums))
 
 
+def _expanded_top_pool(top_count: int, requested_top_pool: int) -> int:
+    if int(top_count) < 50:
+        return int(requested_top_pool)
+    return min(TOTAL_COMBINATIONS, max(int(requested_top_pool), int(top_count) * 150))
+
+
 def _score_closeness(value: float, target: float, scale: float) -> float:
     scale = max(0.000001, float(scale))
     penalty = abs(float(value) - float(target)) / scale * 18.0
@@ -501,7 +507,7 @@ def _portfolio_adjusted_score(
     underuse_bonus = 0.0
     for n in nums:
         projected = float(number_counts[int(n)] + 1)
-        overuse_penalty += max(0.0, projected - expected_next - 1.5) ** 1.35
+        overuse_penalty += max(0.0, projected - expected_next - 1.0) ** 1.48
         underuse_bonus += max(0.0, expected_next - projected)
 
     first = min(int(n) for n in nums)
@@ -513,26 +519,29 @@ def _portfolio_adjusted_score(
     late_overuse = sum(max(0.0, float(number_counts[int(n)] + 1) - final_cap) for n in nums)
     return round(
         base
-        - (overuse_penalty * 0.72)
-        - (first_penalty * 1.20)
+        - (overuse_penalty * 1.08)
+        - (first_penalty * 1.65)
         - (late_overuse * 0.55)
-        + (underuse_bonus * 0.025)
+        + (underuse_bonus * 0.10)
         + first_bonus,
         6,
     )
 
 
 def _first_number_soft_target(position: int, first_number: int) -> float:
-    ratios = {1: 0.42, 2: 0.30, 3: 0.22, 4: 0.18, 5: 0.18}
-    return float(position) * ratios.get(int(first_number), 0.18)
+    ratios = {1: 0.28, 2: 0.23, 3: 0.18, 4: 0.14, 5: 0.12}
+    return float(position) * ratios.get(int(first_number), 0.10)
 
 
 def _first_number_cap(top_count: int, first_number: int, multiplier: float | None) -> int | None:
     if multiplier is None:
         return None
-    ratios = {1: 0.42, 2: 0.30, 3: 0.22, 4: 0.18, 5: 0.18}
-    ratio = ratios.get(int(first_number), 0.18)
-    return max(2, ceil(float(top_count) * ratio * float(multiplier)))
+    soft_ratios = {1: 0.28, 2: 0.23, 3: 0.18, 4: 0.14, 5: 0.12}
+    hard_ratios = {1: 0.34, 2: 0.28, 3: 0.22, 4: 0.17, 5: 0.15}
+    first = int(first_number)
+    soft_cap = ceil(float(top_count) * soft_ratios.get(first, 0.10) * float(multiplier))
+    hard_cap = ceil(float(top_count) * hard_ratios.get(first, 0.12))
+    return max(2, min(int(soft_cap), int(hard_cap)))
 
 
 def select_top100_portfolio(candidates: pd.DataFrame, *, top_count: int, max_overlap: int = 13) -> pd.DataFrame:
@@ -543,11 +552,13 @@ def select_top100_portfolio(candidates: pd.DataFrame, *, top_count: int, max_ove
     selected_nums: set[str] = set()
     number_counts: Counter[int] = Counter()
     first_counts: Counter[int] = Counter()
+    start_overlap = max(8, min(13, int(max_overlap)))
     stages = [
-        (int(max_overlap), ceil(float(top_count) * 0.68), 1.0),
-        (14, ceil(float(top_count) * 0.78), 1.4),
-        (15, ceil(float(top_count) * 0.90), 1.85),
-        (15, None, None),
+        (start_overlap, ceil(float(top_count) * 0.62), 1.00),
+        (min(15, start_overlap + 1), ceil(float(top_count) * 0.66), 1.08),
+        (min(15, start_overlap + 2), ceil(float(top_count) * 0.70), 1.16),
+        (min(15, start_overlap + 3), ceil(float(top_count) * 0.73), 1.24),
+        (15, ceil(float(top_count) * 0.76), 1.32),
     ]
     for overlap_limit, number_cap, first_cap_multiplier in stages:
         while len(selected) < int(top_count):
@@ -607,6 +618,43 @@ def select_top100_portfolio(candidates: pd.DataFrame, *, top_count: int, max_ove
             first_counts[best_first] += 1
         if len(selected) >= int(top_count):
             break
+    while len(selected) < int(top_count):
+        best_row = None
+        best_score = None
+        best_overlap = 0
+        best_nums = None
+        for _, row in ranked.iterrows():
+            nums_text = str(row["nums"])
+            if nums_text in selected_nums:
+                continue
+            nums = _parse_nums(nums_text)
+            overlap = _max_overlap_with_selected(nums, selected)
+            adjusted = _portfolio_adjusted_score(
+                row,
+                nums,
+                selected_len=len(selected),
+                top_count=int(top_count),
+                number_counts=number_counts,
+                first_counts=first_counts,
+            )
+            if best_score is None or adjusted > best_score:
+                best_score = adjusted
+                best_row = row.to_dict()
+                best_overlap = int(overlap)
+                best_nums = nums
+        if best_row is None or best_nums is None:
+            break
+        best_first = min(int(n) for n in best_nums)
+        best_row["max_overlap_top100_anterior"] = int(best_overlap)
+        best_row["score_diversidade_top100"] = float(best_score or 0.0)
+        best_row["qtd_dezenas_saturadas_antes"] = 0
+        best_row["primeira_dezena_top100"] = int(best_first)
+        best_row["qtd_primeira_dezena_antes"] = int(first_counts[best_first])
+        best_row["criterio_top100"] = "ranking_top100_preenchimento_final_diverso"
+        selected.append(best_row)
+        selected_nums.add(str(best_row["nums"]))
+        number_counts.update(int(n) for n in best_nums)
+        first_counts[best_first] += 1
     out_df = pd.DataFrame(selected).head(int(top_count)).reset_index(drop=True)
     out_df.insert(0, "rank_top100", range(1, len(out_df) + 1))
     out_df["grupo_top"] = out_df["rank_top100"].map(lambda rank: "top10" if int(rank) <= 10 else ("top50" if int(rank) <= 50 else "top100"))
@@ -708,6 +756,7 @@ def build_top100_prediction(
     last_concurso = int(df.iloc[-1]["concurso"])
     target_context = build_target_context(df, draw_hour=draw_hour, draw_minute=draw_minute, target_climate=target_climate)
     resolved_weights = resolve_exhaustive_weights(weights)
+    analysis_pool = _expanded_top_pool(int(top_count), int(top_pool))
     expected_weights = format_exhaustive_weights(resolved_weights)
     candidates = existing_candidates.copy() if existing_candidates is not None and not existing_candidates.empty else pd.DataFrame()
     valid_cached = False
@@ -718,12 +767,12 @@ def build_top100_prediction(
             and int(base) == last_concurso
             and str(candidates["contexto_data_proximo_concurso"].iloc[0]) == target_context.data_proximo_concurso
             and str(candidates["score_weights"].iloc[0]) == expected_weights
-            and len(candidates) >= int(top_pool)
+            and len(candidates) >= int(analysis_pool)
         )
     if not valid_cached:
         candidates, _summary = build_exhaustive_candidates(
             df,
-            top_games=max(int(top_pool), int(top_count)),
+            top_games=max(int(analysis_pool), int(top_count)),
             draw_hour=draw_hour,
             draw_minute=draw_minute,
             limit_combinations=exhaustive_limit,
@@ -731,7 +780,7 @@ def build_top100_prediction(
             climate_features=climate_features,
             target_climate=target_climate,
         )
-    enriched = enrich_candidates_with_top100_scores(candidates.head(int(top_pool)), df, refinement_payload=refinement_payload)
+    enriched = enrich_candidates_with_top100_scores(candidates.head(int(analysis_pool)), df, refinement_payload=refinement_payload)
     final_games = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
     generated_at = datetime.now().isoformat(timespec="seconds")
     final_games.insert(0, "generated_at", generated_at)
@@ -747,7 +796,7 @@ def build_top100_prediction(
         concurso_alvo=last_concurso + 1,
         generated_at=generated_at,
         top_count=int(top_count),
-        top_pool=int(top_pool),
+        top_pool=int(analysis_pool),
         selected_rows=int(len(final_games)),
         data_proximo_concurso=target_context.data_proximo_concurso,
         prediction_csv_path=str(prediction_csv_path),
@@ -819,6 +868,7 @@ def run_top100_backtest(
     if len(df) <= int(min_history):
         raise ValueError("Historico insuficiente para backtest Top 100.")
     resolved_weights = resolve_exhaustive_weights(weights)
+    analysis_pool = _expanded_top_pool(int(top_count), int(top_pool))
     start_idx = max(int(min_history), len(df) - int(n_eval))
     rows: List[Dict[str, object]] = []
     for idx in range(start_idx, len(df)):
@@ -834,7 +884,7 @@ def run_top100_backtest(
             target_climate = match.iloc[0].to_dict() if not match.empty else None
         candidates, _summary = build_exhaustive_candidates(
             train_df,
-            top_games=max(int(top_pool), int(top_count)),
+            top_games=max(int(analysis_pool), int(top_count)),
             draw_hour=draw_hour,
             draw_minute=draw_minute,
             limit_combinations=exhaustive_limit,
@@ -842,7 +892,7 @@ def run_top100_backtest(
             climate_features=climate_features,
             target_climate=target_climate,
         )
-        enriched = enrich_candidates_with_top100_scores(candidates.head(int(top_pool)), train_df, refinement_payload=refinement_payload)
+        enriched = enrich_candidates_with_top100_scores(candidates.head(int(analysis_pool)), train_df, refinement_payload=refinement_payload)
         selected = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
         selected_nums = set(str(value) for value in selected["nums"].tolist())
         actual_row = _actual_candidate_row(
@@ -873,7 +923,7 @@ def run_top100_backtest(
                 "hit_top100": int(actual_text in selected_nums),
                 "rank_diagnostico_com_gabarito": int(rank_diag),
                 "top_count": int(top_count),
-                "top_pool": int(top_pool),
+                "top_pool": int(analysis_pool),
                 "exhaustive_limit": int(exhaustive_limit) if exhaustive_limit is not None else "",
             }
         )
@@ -902,7 +952,7 @@ def run_top100_backtest(
     return Top100BacktestSummary(
         concursos_avaliados=int(len(results)),
         top_count=int(top_count),
-        top_pool=int(top_pool),
+        top_pool=int(analysis_pool),
         hit_top10=int(results["hit_top10"].sum()) if not results.empty else 0,
         hit_top50=int(results["hit_top50"].sum()) if not results.empty else 0,
         hit_top100=int(results["hit_top100"].sum()) if not results.empty else 0,

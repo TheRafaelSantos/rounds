@@ -37,6 +37,7 @@ from lotofacil_analytics.ml_temporal import run_ml_temporal
 from lotofacil_analytics.optimizer import build_optimized_candidates, score_candidate
 from lotofacil_analytics.post_result_analysis import analyze_post_result, parse_numbers
 from lotofacil_analytics.predictor import select_final_games
+from lotofacil_analytics.pipeline import LotofacilPipeline
 from lotofacil_analytics.selection_guard import build_number_guard_table, enrich_candidates_with_decision_guard
 from lotofacil_analytics.supervised_calibration import load_supervised_calibration_status, run_supervised_calibration
 from lotofacil_analytics.temporal_deep import build_temporal_deep_rows, temporal_deep_number_scores
@@ -100,6 +101,42 @@ class LotofacilValidationTest(unittest.TestCase):
         record = normalize_contest(sample_payload())
         with self.assertRaises(DataValidationError):
             validate_dataset([record, record])
+
+    def test_append_manual_result_writes_validated_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AppConfig.from_base_dir(Path(tmp))
+            pipeline = LotofacilPipeline(config=config, logger=logging.getLogger("test-append-manual"))
+
+            summary = pipeline.append_manual_result(
+                concurso=1,
+                data_sorteio="2026-06-29",
+                data_proximo_concurso="2026-06-30",
+                dezenas="01 02 03 04 05 06 07 08 09 10 11 12 13 14 15",
+            )
+            df = pd.read_csv(config.processed_csv_path)
+
+            self.assertEqual(summary.fetched, 1)
+            self.assertEqual(len(df), 1)
+            self.assertEqual(int(df.iloc[0]["concurso"]), 1)
+            self.assertEqual(int(df.iloc[0]["d01"]), 1)
+            self.assertEqual(int(df.iloc[0]["d15"]), 15)
+            self.assertTrue((config.raw_dir / "concurso_000001.json").exists())
+
+            repeated = pipeline.append_manual_result(
+                concurso=1,
+                data_sorteio="2026-06-29",
+                data_proximo_concurso="2026-06-30",
+                dezenas="01 02 03 04 05 06 07 08 09 10 11 12 13 14 15",
+            )
+            self.assertEqual(repeated.fetched, 0)
+
+            with self.assertRaises(ValueError):
+                pipeline.append_manual_result(
+                    concurso=1,
+                    data_sorteio="2026-06-29",
+                    data_proximo_concurso="2026-06-30",
+                    dezenas="01 02 03 04 05 06 07 08 09 10 11 12 13 14 16",
+                )
 
     def test_build_base_features_uses_previous_contest_only(self) -> None:
         first = normalize_contest(sample_payload(1))
