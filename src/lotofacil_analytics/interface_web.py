@@ -220,6 +220,7 @@ def _html_page() -> str:
           {key: 'rank_top100', label: 'Rank'},
           {key: 'nums', label: 'Jogo'},
           {key: 'grupo_top', label: 'Grupo'},
+          {key: 'estrategia_origem_top100', label: 'Estratégia'},
           {key: 'primeira_dezena_top100', label: 'Primeira dezena'},
           {key: 'score_top100', label: 'Score Top 100'},
           {key: 'score_final', label: 'Score base'},
@@ -231,6 +232,7 @@ def _html_page() -> str:
         '<section class="comparison"><h2>Top 100 completo</h2>' + tableRows(rows.slice(0, 100), [
           {key: 'rank_top100', label: 'Rank'},
           {key: 'nums', label: 'Jogo'},
+          {key: 'estrategia_origem_top100', label: 'Estratégia'},
           {key: 'primeira_dezena_top100', label: 'Primeira dezena'},
           {key: 'score_top100', label: 'Score Top 100'},
           {key: 'score_top50_refinado', label: 'Score refinado'},

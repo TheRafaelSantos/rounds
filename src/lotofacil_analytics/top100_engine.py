@@ -729,6 +729,12 @@ def _max_overlap_with_selected(nums: Sequence[int], selected_rows: Sequence[Mapp
     return int(best)
 
 
+def _is_closure_candidate(row: Mapping[str, object]) -> bool:
+    source = str(row.get("source_model", "") or "")
+    weights = str(row.get("score_weights", "") or "")
+    return source.startswith("closure_") or weights.startswith("closure_")
+
+
 def _portfolio_adjusted_score(
     row: Mapping[str, object],
     nums: Sequence[int],
@@ -754,13 +760,18 @@ def _portfolio_adjusted_score(
 
     final_cap = max(1.0, float(top_count) * 15.0 / 25.0)
     late_overuse = sum(max(0.0, float(number_counts[int(n)] + 1) - final_cap) for n in nums)
+    closure_bonus = 0.0
+    if _is_closure_candidate(row):
+        coverage_pct = _safe_float(row, "cobertura_condicional_pct_top100", 0.0)
+        closure_bonus = 5.5 + min(10.0, coverage_pct * 0.16)
     return round(
         base
         - (overuse_penalty * 1.08)
         - (first_penalty * 1.65)
         - (late_overuse * 0.55)
         + (underuse_bonus * 0.10)
-        + first_bonus,
+        + first_bonus
+        + closure_bonus,
         6,
     )
 
@@ -895,6 +906,10 @@ def select_top100_portfolio(candidates: pd.DataFrame, *, top_count: int, max_ove
     out_df = pd.DataFrame(selected).head(int(top_count)).reset_index(drop=True)
     out_df.insert(0, "rank_top100", range(1, len(out_df) + 1))
     out_df["grupo_top"] = out_df["rank_top100"].map(lambda rank: "top10" if int(rank) <= 10 else ("top50" if int(rank) <= 50 else "top100"))
+    if "source_model" in out_df.columns:
+        out_df["estrategia_origem_top100"] = out_df["source_model"].fillna(TOP100_SOURCE_MODEL).astype(str)
+    else:
+        out_df["estrategia_origem_top100"] = TOP100_SOURCE_MODEL
     out_df["source_model"] = TOP100_SOURCE_MODEL
     out_df["metodo"] = TOP100_SOURCE_MODEL
     return out_df
