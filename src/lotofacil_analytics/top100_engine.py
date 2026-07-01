@@ -20,6 +20,7 @@ from .exhaustive_optimizer import (
     format_exhaustive_weights,
     resolve_exhaustive_weights,
 )
+from .mandel_strategy import greedy_reduced_closure
 from .normalize import DEZENAS
 from .selection_guard import enrich_candidates_with_decision_guard
 from .storage import sanitize_dataframe_for_tabular_output
@@ -554,6 +555,138 @@ def _build_coverage_hedge_candidates(
     return pd.DataFrame(rows)
 
 
+def _candidate_number_strength(candidates: pd.DataFrame) -> Dict[int, float]:
+    if candidates.empty or "nums" not in candidates.columns:
+        return {n: 0.0 for n in NUMBERS}
+    strength = {n: 0.0 for n in NUMBERS}
+    counts = {n: 0 for n in NUMBERS}
+    ranked = candidates.head(min(len(candidates), 3000)).copy().reset_index(drop=True)
+    for idx, row in ranked.iterrows():
+        try:
+            nums = _parse_nums(str(row["nums"]))
+        except ValueError:
+            continue
+        base = _safe_float(row, "score_final", _safe_float(row, "score_top100", 50.0))
+        rank_weight = 1.0 / (1.0 + (float(idx) / 500.0))
+        for n in nums:
+            strength[int(n)] += base * rank_weight
+            counts[int(n)] += 1
+    return {n: round(strength[n] / max(1, counts[n]), 6) for n in NUMBERS}
+
+
+def _ranked_universe_numbers(concursos: pd.DataFrame, candidates: pd.DataFrame) -> List[int]:
+    strength = _candidate_number_strength(candidates)
+    low_recent = _recent_low_frequency_numbers(concursos, window=30)
+    low_recent_rank = {n: idx for idx, n in enumerate(low_recent)}
+    last_draw = set(_nums_from_row(concursos.sort_values("concurso").iloc[-1])) if not concursos.empty else set()
+    return sorted(
+        NUMBERS,
+        key=lambda n: (
+            -strength.get(n, 0.0),
+            0 if n in last_draw else 1,
+            low_recent_rank.get(n, 999),
+            n,
+        ),
+    )
+
+
+def _closure_rows_for_universe(
+    universe: Sequence[int],
+    *,
+    label: str,
+    max_games: int,
+    score_final: float,
+    last_concurso: int,
+    seen: set[str],
+) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    try:
+        games, coverage_pct, complete = greedy_reduced_closure(universe, guarantee_hits=14, max_games=max_games)
+    except ValueError:
+        return rows
+    for game in games:
+        nums_text = _format_nums(game)
+        if nums_text in seen:
+            continue
+        seen.add(nums_text)
+        rows.append(
+            {
+                "rank": 850000 + len(seen),
+                "nums": nums_text,
+                "score_final": float(score_final),
+                "score_estatistico": float(score_final),
+                "score_historico": 63.0,
+                "score_atraso": 61.0,
+                "score_combinatorio": 70.0,
+                "score_localidade_numerologia": 50.0,
+                "score_contextual": 52.0,
+                "score_climatico": 50.0,
+                "score_temporal_profundo": 58.0,
+                "score_cenarios": 62.0,
+                "score_contrarian": 60.0,
+                "score_transicao": 64.0,
+                "score_decisao_protegida": float(score_final),
+                "score_cobertura_risco_falso_negativo": 72.0,
+                "score_weights": f"{label}_coverage_pct={coverage_pct}_complete={int(complete)}",
+                "source_model": label,
+                "metodo": label,
+                "concurso_base_final": last_concurso,
+                "universo_fechamento_top100": _format_nums(universe),
+                "cobertura_condicional_pct_top100": float(coverage_pct),
+            }
+        )
+    return rows
+
+
+def _build_closure_hedge_candidates(
+    concursos: pd.DataFrame,
+    candidates: pd.DataFrame,
+    existing_nums: Sequence[str],
+    *,
+    top_count: int,
+) -> pd.DataFrame:
+    if int(top_count) < 50 or candidates.empty:
+        return pd.DataFrame()
+    last_concurso = int(concursos["concurso"].max()) if not concursos.empty else 0
+    ranked_numbers = _ranked_universe_numbers(concursos, candidates)
+    rank_order = {n: idx for idx, n in enumerate(ranked_numbers)}
+    low_recent = _recent_low_frequency_numbers(concursos, window=30)
+    last_draw = set(_nums_from_row(concursos.sort_values("concurso").iloc[-1])) if not concursos.empty else set()
+    seen = {str(value) for value in existing_nums}
+    universes: List[Tuple[str, List[int], int, float]] = []
+
+    universes.append(("closure_universo_top20", sorted(ranked_numbers[:20]), 36, 77.0))
+    universes.append(("closure_universo_top19", sorted(ranked_numbers[:19]), 28, 76.5))
+
+    transition_universe = sorted(set(ranked_numbers[:12]) | last_draw | set(low_recent[:5]), key=lambda n: rank_order.get(n, 999))
+    if len(transition_universe) >= 18:
+        universes.append(("closure_transicao_20", sorted(transition_universe[:20]), 36, 76.8))
+
+    contrarian_universe = sorted(set(ranked_numbers[:14]) | set(low_recent[:8]), key=lambda n: (0 if n in low_recent[:8] else 1, rank_order.get(n, 999)))
+    if len(contrarian_universe) >= 18:
+        universes.append(("closure_contrarian_20", sorted(contrarian_universe[:20]), 30, 75.8))
+
+    no_one = [n for n in ranked_numbers if n != 1]
+    if len(no_one) >= 19:
+        universes.append(("closure_sem_01_19", sorted(no_one[:19]), 24, 75.5))
+
+    rows: List[Dict[str, object]] = []
+    for label, universe, max_games, score_final in universes:
+        if len(universe) < 15:
+            continue
+        rows.extend(
+            _closure_rows_for_universe(
+                universe,
+                label=label,
+                max_games=max_games,
+                score_final=score_final,
+                last_concurso=last_concurso,
+                seen=seen,
+            )
+        )
+    return pd.DataFrame(rows)
+
+
 def enrich_candidates_with_top100_scores(
     candidates: pd.DataFrame,
     concursos: pd.DataFrame,
@@ -886,7 +1019,13 @@ def build_top100_prediction(
         )
     base_pool = candidates.head(int(analysis_pool)).copy()
     hedge_pool = _build_coverage_hedge_candidates(df, base_pool["nums"].astype(str).tolist() if "nums" in base_pool.columns else [], top_count=int(top_count))
-    scored_pool = pd.concat([base_pool, hedge_pool], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
+    closure_pool = _build_closure_hedge_candidates(
+        df,
+        base_pool,
+        list(base_pool["nums"].astype(str)) + (list(hedge_pool["nums"].astype(str)) if "nums" in hedge_pool.columns else []),
+        top_count=int(top_count),
+    )
+    scored_pool = pd.concat([base_pool, hedge_pool, closure_pool], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
     enriched = enrich_candidates_with_top100_scores(scored_pool, df, refinement_payload=refinement_payload)
     final_games = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
     generated_at = datetime.now().isoformat(timespec="seconds")
@@ -1005,7 +1144,13 @@ def run_top100_backtest(
             base_pool["nums"].astype(str).tolist() if "nums" in base_pool.columns else [],
             top_count=int(top_count),
         )
-        scored_pool = pd.concat([base_pool, hedge_pool], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
+        closure_pool = _build_closure_hedge_candidates(
+            train_df,
+            base_pool,
+            list(base_pool["nums"].astype(str)) + (list(hedge_pool["nums"].astype(str)) if "nums" in hedge_pool.columns else []),
+            top_count=int(top_count),
+        )
+        scored_pool = pd.concat([base_pool, hedge_pool, closure_pool], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
         enriched = enrich_candidates_with_top100_scores(scored_pool, train_df, refinement_payload=refinement_payload)
         selected = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
         selected_nums = set(str(value) for value in selected["nums"].tolist())
