@@ -43,6 +43,7 @@ from lotofacil_analytics.supervised_calibration import load_supervised_calibrati
 from lotofacil_analytics.temporal_deep import build_temporal_deep_rows, temporal_deep_number_scores
 from lotofacil_analytics.top50_refinement_engine import load_top50_refinement_status, run_top50_refinement
 from lotofacil_analytics.top100_engine import build_top100_prediction, run_top100_backtest, select_top100_portfolio
+from lotofacil_analytics.top100_repair_learning import learn_from_prediction
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.transition_analysis import build_transition_model, build_transition_outputs, score_transition_candidate
 from lotofacil_analytics.validators import DataValidationError, validate_contest_record, validate_dataset
@@ -949,6 +950,30 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertTrue((base / "bt.csv").exists())
             self.assertTrue((base / "bt_summary.csv").exists())
             self.assertTrue((base / "bt.xlsx").exists())
+
+    def test_top100_repair_learning_extracts_near_miss_swaps(self) -> None:
+        prediction = pd.DataFrame(
+            [
+                {
+                    "rank_top100": 1,
+                    "nums": "01 02 03 04 05 06 07 08 09 10 11 12 13 14 15",
+                    "estrategia_origem_top100": "coverage_test",
+                }
+            ]
+        )
+        actual = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19]
+
+        payload, rows = learn_from_prediction(prediction, actual_numbers=actual, concurso=99, min_hits=12)
+
+        self.assertEqual(int(rows["hits"].iloc[0]), 11)
+        self.assertEqual(payload["add_scores"], {})
+
+        payload, rows = learn_from_prediction(prediction, actual_numbers=actual, concurso=99, min_hits=11)
+        self.assertEqual(int(rows["learned"].iloc[0]), 1)
+        for number in ["16", "17", "18", "19"]:
+            self.assertIn(number, payload["add_scores"])
+        for number in ["12", "13", "14", "15"]:
+            self.assertIn(number, payload["remove_scores"])
 
     def test_top100_portfolio_diversifies_overused_numbers(self) -> None:
         rows = []

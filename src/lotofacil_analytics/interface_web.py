@@ -16,6 +16,7 @@ from .pipeline import LotofacilPipeline
 from .supervised_calibration import load_supervised_calibration_status
 from .top50_refinement_pipeline import Top50RefinementPipeline
 from .top100_pipeline import Top100Pipeline
+from .top100_repair_learning import Top100RepairLearningPipeline
 
 
 def _html_page() -> str:
@@ -315,11 +316,44 @@ def _html_page() -> str:
         ]) + '</section>' +
       '</section>';
     }
+    function scoreDictRows(scores) {
+      if (!scores || typeof scores !== 'object') {
+        return [];
+      }
+      return Object.keys(scores).map(function(key) {
+        return {dezena: key, score: Number(scores[key] || 0)};
+      }).sort(function(a, b) { return b.score - a.score; }).slice(0, 12);
+    }
+    function renderTop100Repair(data) {
+      const state = data.state || {};
+      return '<section class="calibration-panel">' +
+        '<div class="game-head"><h2>Reparo Top100 por quase-acerto</h2><span class="tag">' + escapeHtml(state.status || 'sem status') + '</span></div>' +
+        '<div class="status-grid">' +
+          statusCard('Concursos aprendidos', state.learned_contests_count || 0) +
+          statusCard('Processados na última execução', state.processed_this_run || 0) +
+          statusCard('Melhor quase-acerto visto', state.best_hits_seen || '-') +
+          statusCard('Mínimo para aprender', state.min_hits || '-') +
+          statusCard('Pendentes', state.pending_prediction_files ?? '-') +
+          statusCard('Atualizado em', state.updated_at || '-') +
+        '</div>' +
+        '<div class="exclusives"><strong>Como ler:</strong> dezenas para entrar são as que faltavam nos quase-acertos históricos; dezenas para sair são falsas positivas frequentes nesses mesmos jogos.</div>' +
+        '<section class="comparison"><h2>Dezenas que o reparo tenta colocar</h2>' + tableRows(scoreDictRows(data.add_scores), [
+          {key: 'dezena', label: 'Dezena'},
+          {key: 'score', label: 'Score'}
+        ]) + '</section>' +
+        '<section class="comparison"><h2>Dezenas que o reparo tenta remover</h2>' + tableRows(scoreDictRows(data.remove_scores), [
+          {key: 'dezena', label: 'Dezena'},
+          {key: 'score', label: 'Score'}
+        ]) + '</section>' +
+      '</section>';
+    }
     function renderLearning(data) {
       const supervised = data.supervised || {};
       const top50 = data.top50 || {};
+      const top100Repair = data.top100_repair || {};
       const supervisedState = supervised.state || {};
       const top50State = top50.state || {};
+      const repairState = top100Repair.state || {};
       return '<section class="calibration-panel">' +
         '<div class="game-head"><h2>Aprendizado unificado</h2><span class="tag">motor 3.0</span></div>' +
         '<div class="status-grid">' +
@@ -331,11 +365,15 @@ def _html_page() -> str:
           statusCard('Top50 rank refinado', top50State.rank_after_avg ?? '-') +
           statusCard('Top50 Hit@50', top50State.hit_top50_after !== undefined ? Number(top50State.hit_top50_after).toFixed(2) + '%' : '-') +
           statusCard('Top50 Hit@100', top50State.hit_top100_after !== undefined ? Number(top50State.hit_top100_after).toFixed(2) + '%' : '-') +
+          statusCard('Reparo Top100', repairState.status || '-') +
+          statusCard('Reparo concursos', repairState.learned_contests_count || 0) +
+          statusCard('Reparo melhor quase-acerto', repairState.best_hits_seen || '-') +
         '</div>' +
         '<div class="exclusives"><strong>Como ler:</strong> este botão centraliza todos os aprendizados. Os serviços 24/7 continuam treinando por trás; aqui você acompanha o estado consolidado sem precisar escolher entre painéis separados.</div>' +
       '</section>' +
       renderSupervised(supervised) +
-      renderTop50Refinement(top50);
+      renderTop50Refinement(top50) +
+      renderTop100Repair(top100Repair);
     }
     async function request(path, options) {
       const output = document.getElementById('output');
@@ -433,6 +471,7 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                             weights_json_path=config.supervised_calibration_weights_json_path,
                         ),
                         "top50": Top50RefinementPipeline(config=config, logger=logger).status(),
+                        "top100_repair": Top100RepairLearningPipeline(config=config, logger=logger).status(),
                     }
                 )
                 return

@@ -84,3 +84,29 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
     restart: unless-stopped
+
+  lotofacil-top100-repair:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lotofacil-top100-repair
+    command:
+      [
+        "python",
+        "main.py",
+        "--top100-repair-learn",
+        "--top100-repair-loop",
+        "--top100-repair-max-contests",
+        "10",
+        "--top100-repair-min-hits",
+        "11",
+        "--top100-repair-sleep-seconds",
+        "30"
+      ]
+    environment:
+      TZ: America/Sao_Paulo
+      PYTHONPATH: /app/src
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped

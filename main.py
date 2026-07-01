@@ -36,6 +36,7 @@ from lotofacil_analytics.interface_web import run_web_server
 from lotofacil_analytics.supervised_calibration_pipeline import SupervisedCalibrationPipeline
 from lotofacil_analytics.top50_refinement_pipeline import Top50RefinementPipeline
 from lotofacil_analytics.top100_pipeline import Top100Pipeline
+from lotofacil_analytics.top100_repair_learning import Top100RepairLearningPipeline
 from lotofacil_analytics.transition_pipeline import TransitionPipeline
 from lotofacil_analytics.temporal_deep_pipeline import TemporalDeepPipeline
 
@@ -80,6 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--calibrate-engine", action="store_true", help="Calibra pesos do motor por walk-forward contra concursos passados.")
     mode.add_argument("--supervised-calibration", action="store_true", help="Roda aprendizado supervisionado com gabarito historico e aplica pesos medios ao motor.")
     mode.add_argument("--refine-top50", action="store_true", help="Roda Motor 3.0 Refinador Top50 pos-erro contra hard negatives historicos.")
+    mode.add_argument("--top100-repair-learn", action="store_true", help="Aprende reparos de quase-acertos Top100 em concursos ja encerrados.")
     mode.add_argument("--top100", action="store_true", help="Gera ranking Top 100 / Top 50 com estudos avancados.")
     mode.add_argument("--top100-backtest", action="store_true", help="Valida historicamente o ranking Top 100 / Top 50.")
     mode.add_argument("--append-result", action="store_true", help="Anexa manualmente um resultado quando a API remota ainda nao retornou o concurso.")
@@ -161,6 +163,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top100-max-overlap", type=int, default=11, help="Overlap maximo inicial entre jogos do portfolio Top 100.")
     parser.add_argument("--top100-n-eval", type=int, default=20, help="Concursos finais avaliados no --top100-backtest.")
     parser.add_argument("--top100-exhaustive-limit", type=int, default=0, help="Limite tecnico de combinacoes no Top 100; 0 avalia todas.")
+    parser.add_argument("--top100-repair-max-contests", type=int, default=10, help="Maximo de concursos aprendidos por execucao no reparo Top100; 0 processa todos.")
+    parser.add_argument("--top100-repair-min-hits", type=int, default=11, help="Minimo de acertos para aprender reparos Top100.")
+    parser.add_argument("--top100-repair-prediction-file", default=None, help="CSV Top100 especifico para aprendizado manual de reparo.")
+    parser.add_argument("--top100-repair-loop", action="store_true", help="Mantem o aprendizado de reparo Top100 rodando em ciclos.")
+    parser.add_argument("--top100-repair-sleep-seconds", type=int, default=30, help="Pausa entre ciclos do --top100-repair-loop.")
     parser.add_argument("--host", default="127.0.0.1", help="Host da interface web local.")
     parser.add_argument("--port", type=int, default=8765, help="Porta da interface web local.")
     return parser
@@ -201,6 +208,7 @@ def main() -> int:
         or args.calibrate_engine
         or args.supervised_calibration
         or args.refine_top50
+        or args.top100_repair_learn
         or args.top100
         or args.top100_backtest
         or args.append_result
@@ -423,6 +431,26 @@ def main() -> int:
                 draw_hour=args.draw_hour,
                 draw_minute=args.draw_minute,
                 reset=args.top50_refine_reset,
+            )
+        elif args.top100_repair_learn:
+            repair_pipeline = Top100RepairLearningPipeline(config=config, logger=logger)
+            prediction_file = Path(args.top100_repair_prediction_file).resolve() if args.top100_repair_prediction_file else None
+            actual_numbers = None
+            if args.actual_numbers:
+                actual_numbers = [int(part) for part in str(args.actual_numbers).replace(",", " ").replace("-", " ").split()]
+            if args.top100_repair_loop:
+                repair_pipeline.loop(
+                    sleep_seconds=args.top100_repair_sleep_seconds,
+                    max_contests=args.top100_repair_max_contests,
+                    min_hits=args.top100_repair_min_hits,
+                )
+                return 0
+            summary = repair_pipeline.run(
+                max_contests=args.top100_repair_max_contests,
+                min_hits=args.top100_repair_min_hits,
+                prediction_file=prediction_file,
+                actual_numbers=actual_numbers,
+                concurso=args.result_concurso,
             )
         elif args.top100:
             summary = Top100Pipeline(config=config, logger=logger).predict(

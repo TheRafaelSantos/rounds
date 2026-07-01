@@ -687,6 +687,126 @@ def _build_closure_hedge_candidates(
     return pd.DataFrame(rows)
 
 
+def _number_score_from_payload(payload: Mapping[str, object], key: str) -> Dict[int, float]:
+    raw = payload.get(key)
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[int, float] = {}
+    for number, value in raw.items():
+        try:
+            out[int(number)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _build_top100_repair_swap_candidates(
+    selected_games: pd.DataFrame,
+    repair_payload: Mapping[str, object] | None,
+    existing_nums: Sequence[str],
+    *,
+    top_count: int,
+) -> pd.DataFrame:
+    if int(top_count) < 50 or not repair_payload or selected_games.empty:
+        return pd.DataFrame()
+    add_scores = _number_score_from_payload(repair_payload, "add_scores")
+    remove_scores = _number_score_from_payload(repair_payload, "remove_scores")
+    if not add_scores or not remove_scores:
+        return pd.DataFrame()
+    learned_contests = int(repair_payload.get("contests", 0) or 0)
+    if learned_contests <= 0:
+        return pd.DataFrame()
+    swap_counter_raw = repair_payload.get("swap_counter", {})
+    swap_order = [3, 2, 4]
+    if isinstance(swap_counter_raw, dict) and swap_counter_raw:
+        swap_order = [
+            int(key)
+            for key, _value in sorted(
+                swap_counter_raw.items(),
+                key=lambda item: (-float(item[1] or 0.0), str(item[0])),
+            )
+            if str(key).isdigit() and 2 <= int(key) <= 4
+        ] or [3, 2, 4]
+
+    seen = {str(value) for value in existing_nums}
+    rows: List[Dict[str, object]] = []
+    seed_rows = selected_games.head(min(len(selected_games), max(30, int(top_count)))).copy()
+    target_rows = max(int(top_count) * 22, 1600)
+    for _, seed in seed_rows.iterrows():
+        try:
+            nums = _parse_nums(str(seed["nums"]))
+        except ValueError:
+            continue
+        nums_set = set(nums)
+        outside = [n for n in NUMBERS if n not in nums_set]
+        add_pool = sorted(outside, key=lambda n: (-add_scores.get(n, 0.0), n))[:9]
+        remove_pool = sorted(nums, key=lambda n: (-remove_scores.get(n, 0.0), n))[:9]
+        if not add_pool or not remove_pool:
+            continue
+        local: List[Tuple[float, str, int, Tuple[int, ...], Tuple[int, ...]]] = []
+        seed_score = _safe_float(seed, "score_diversidade_top100", _safe_float(seed, "score_top100", 70.0))
+        for swap_size in swap_order:
+            if swap_size > len(add_pool) or swap_size > len(remove_pool):
+                continue
+            for removed in combinations(remove_pool, int(swap_size)):
+                remove_strength = sum(remove_scores.get(int(n), 0.0) for n in removed)
+                if remove_strength <= 0.0:
+                    continue
+                for added in combinations(add_pool, int(swap_size)):
+                    add_strength = sum(add_scores.get(int(n), 0.0) for n in added)
+                    if add_strength <= 0.0:
+                        continue
+                    repaired = tuple(sorted((nums_set - set(removed)) | set(added)))
+                    if len(repaired) != 15 or len(set(repaired)) != 15:
+                        continue
+                    rows_count, cols_count = _grid_counts(repaired)
+                    even_count = sum(1 for n in repaired if int(n) % 2 == 0)
+                    total = sum(int(n) for n in repaired)
+                    if not (5 <= even_count <= 10 and 160 <= total <= 230 and max(rows_count) <= 5 and max(cols_count) <= 5):
+                        continue
+                    nums_text = _format_nums(repaired)
+                    if nums_text in seen:
+                        continue
+                    repair_score = seed_score + ((add_strength + remove_strength) / float(swap_size) * 0.12) - (float(swap_size) * 0.85)
+                    local.append((repair_score, nums_text, int(swap_size), tuple(sorted(removed)), tuple(sorted(added))))
+        local.sort(key=lambda item: (-item[0], item[1]))
+        for repair_score, nums_text, swap_size, removed, added in local[:36]:
+            if nums_text in seen:
+                continue
+            seen.add(nums_text)
+            rows.append(
+                {
+                    "rank": 800000 + len(rows) + 1,
+                    "nums": nums_text,
+                    "score_final": round(min(96.0, max(72.0, repair_score)), 6),
+                    "score_estatistico": round(min(96.0, max(72.0, repair_score)), 6),
+                    "score_historico": 66.0,
+                    "score_atraso": 66.0,
+                    "score_combinatorio": 72.0,
+                    "score_localidade_numerologia": 50.0,
+                    "score_contextual": 52.0,
+                    "score_climatico": 50.0,
+                    "score_temporal_profundo": 60.0,
+                    "score_cenarios": 64.0,
+                    "score_contrarian": 68.0,
+                    "score_transicao": 70.0,
+                    "score_decisao_protegida": round(min(96.0, max(72.0, repair_score)), 6),
+                    "score_cobertura_risco_falso_negativo": 76.0,
+                    "score_weights": f"top100_repair_learning_contests={learned_contests}",
+                    "source_model": "repair_top100_quase_acerto",
+                    "metodo": "repair_top100_quase_acerto",
+                    "score_reparo_top100": round(float(repair_score), 6),
+                    "reparo_seed_rank": int(seed.get("rank_top100", 0) or 0),
+                    "reparo_tamanho_troca": int(swap_size),
+                    "reparo_dezenas_sair": _format_nums(removed),
+                    "reparo_dezenas_entrar": _format_nums(added),
+                }
+            )
+            if len(rows) >= target_rows:
+                return pd.DataFrame(rows)
+    return pd.DataFrame(rows)
+
+
 def enrich_candidates_with_top100_scores(
     candidates: pd.DataFrame,
     concursos: pd.DataFrame,
@@ -735,6 +855,12 @@ def _is_closure_candidate(row: Mapping[str, object]) -> bool:
     return source.startswith("closure_") or weights.startswith("closure_")
 
 
+def _is_repair_candidate(row: Mapping[str, object]) -> bool:
+    source = str(row.get("source_model", "") or "")
+    weights = str(row.get("score_weights", "") or "")
+    return source.startswith("repair_top100_") or weights.startswith("top100_repair_")
+
+
 def _portfolio_adjusted_score(
     row: Mapping[str, object],
     nums: Sequence[int],
@@ -764,6 +890,9 @@ def _portfolio_adjusted_score(
     if _is_closure_candidate(row):
         coverage_pct = _safe_float(row, "cobertura_condicional_pct_top100", 0.0)
         closure_bonus = 5.5 + min(10.0, coverage_pct * 0.16)
+    repair_bonus = 0.0
+    if _is_repair_candidate(row):
+        repair_bonus = 6.0 + min(7.0, _safe_float(row, "score_reparo_top100", 0.0) * 0.045)
     return round(
         base
         - (overuse_penalty * 1.08)
@@ -771,7 +900,8 @@ def _portfolio_adjusted_score(
         - (late_overuse * 0.55)
         + (underuse_bonus * 0.10)
         + first_bonus
-        + closure_bonus,
+        + closure_bonus
+        + repair_bonus,
         6,
     )
 
@@ -960,6 +1090,7 @@ def _build_report(
         "9. detector de falso positivo;",
         "10. score learning-to-rank interno para reordenar os candidatos;",
         "11. refinador Top50 pos-erro, quando treinado, para subir gabaritos historicos contra falsos positivos.",
+        "12. reparo Top100 por quase-acerto, quando treinado, para trocar dezenas provaveis de sair/entrar a partir de concursos encerrados.",
         "",
         "## Top 100",
         "",
@@ -998,6 +1129,7 @@ def build_top100_prediction(
     target_climate: Mapping[str, object] | None,
     weights: Mapping[str, float] | None,
     refinement_payload: Mapping[str, object] | None = None,
+    repair_payload: Mapping[str, object] | None = None,
     prediction_csv_path: Path,
     report_path: Path,
     excel_path: Path,
@@ -1042,6 +1174,16 @@ def build_top100_prediction(
     )
     scored_pool = pd.concat([base_pool, hedge_pool, closure_pool], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
     enriched = enrich_candidates_with_top100_scores(scored_pool, df, refinement_payload=refinement_payload)
+    preliminary_games = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
+    repair_pool = _build_top100_repair_swap_candidates(
+        preliminary_games,
+        repair_payload,
+        list(scored_pool["nums"].astype(str)) + list(preliminary_games["nums"].astype(str)),
+        top_count=int(top_count),
+    )
+    if not repair_pool.empty:
+        repair_enriched = enrich_candidates_with_top100_scores(repair_pool, df, refinement_payload=refinement_payload)
+        enriched = pd.concat([enriched, repair_enriched], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
     final_games = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
     generated_at = datetime.now().isoformat(timespec="seconds")
     final_games.insert(0, "generated_at", generated_at)

@@ -367,6 +367,10 @@ class AppConfig:
         return self.exports_dir / "lotofacil_prediction_top100.xlsx"
 
     @property
+    def top100_prediction_history_dir(self) -> Path:
+        return self.processed_dir / "top100_history"
+
+    @property
     def top100_backtest_csv_path(self) -> Path:
         return self.processed_dir / "lotofacil_backtest_top100.csv"
 
@@ -401,3 +405,19 @@ class AppConfig:
     @property
     def top50_refinement_excel_path(self) -> Path:
         return self.exports_dir / "lotofacil_top50_refinement.xlsx"
+
+    @property
+    def top100_repair_state_json_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top100_repair_state.json"
+
+    @property
+    def top100_repair_weights_json_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top100_repair_weights.json"
+
+    @property
+    def top100_repair_results_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top100_repair_results.csv"
+
+    @property
+    def top100_repair_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top100_repair_summary.csv"
