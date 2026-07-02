@@ -1130,6 +1130,7 @@ def build_top100_prediction(
     weights: Mapping[str, float] | None,
     refinement_payload: Mapping[str, object] | None = None,
     repair_payload: Mapping[str, object] | None = None,
+    quick_mode: bool = False,
     prediction_csv_path: Path,
     report_path: Path,
     excel_path: Path,
@@ -1165,25 +1166,29 @@ def build_top100_prediction(
             target_climate=target_climate,
         )
     base_pool = candidates.head(int(analysis_pool)).copy()
-    hedge_pool = _build_coverage_hedge_candidates(df, base_pool["nums"].astype(str).tolist() if "nums" in base_pool.columns else [], top_count=int(top_count))
-    closure_pool = _build_closure_hedge_candidates(
-        df,
-        base_pool,
-        list(base_pool["nums"].astype(str)) + (list(hedge_pool["nums"].astype(str)) if "nums" in hedge_pool.columns else []),
-        top_count=int(top_count),
-    )
-    scored_pool = pd.concat([base_pool, hedge_pool, closure_pool], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
+    if quick_mode:
+        scored_pool = base_pool.copy()
+    else:
+        hedge_pool = _build_coverage_hedge_candidates(df, base_pool["nums"].astype(str).tolist() if "nums" in base_pool.columns else [], top_count=int(top_count))
+        closure_pool = _build_closure_hedge_candidates(
+            df,
+            base_pool,
+            list(base_pool["nums"].astype(str)) + (list(hedge_pool["nums"].astype(str)) if "nums" in hedge_pool.columns else []),
+            top_count=int(top_count),
+        )
+        scored_pool = pd.concat([base_pool, hedge_pool, closure_pool], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
     enriched = enrich_candidates_with_top100_scores(scored_pool, df, refinement_payload=refinement_payload)
-    preliminary_games = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
-    repair_pool = _build_top100_repair_swap_candidates(
-        preliminary_games,
-        repair_payload,
-        list(scored_pool["nums"].astype(str)) + list(preliminary_games["nums"].astype(str)),
-        top_count=int(top_count),
-    )
-    if not repair_pool.empty:
-        repair_enriched = enrich_candidates_with_top100_scores(repair_pool, df, refinement_payload=refinement_payload)
-        enriched = pd.concat([enriched, repair_enriched], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
+    if not quick_mode:
+        preliminary_games = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
+        repair_pool = _build_top100_repair_swap_candidates(
+            preliminary_games,
+            repair_payload,
+            list(scored_pool["nums"].astype(str)) + list(preliminary_games["nums"].astype(str)),
+            top_count=int(top_count),
+        )
+        if not repair_pool.empty:
+            repair_enriched = enrich_candidates_with_top100_scores(repair_pool, df, refinement_payload=refinement_payload)
+            enriched = pd.concat([enriched, repair_enriched], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
     final_games = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
     generated_at = datetime.now().isoformat(timespec="seconds")
     final_games.insert(0, "generated_at", generated_at)

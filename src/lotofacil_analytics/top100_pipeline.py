@@ -25,6 +25,7 @@ class Top100Pipeline:
         draw_hour: int,
         draw_minute: int,
         exhaustive_limit: int | None,
+        quick_mode: bool = False,
     ) -> Top100Summary:
         concursos = load_processed_csv(self.config.processed_csv_path)
         if concursos.empty:
@@ -50,6 +51,7 @@ class Top100Pipeline:
             weights=load_supervised_calibrated_weights(self.config.supervised_calibration_weights_json_path),
             refinement_payload=load_top50_refinement_payload(self.config.top50_refinement_weights_json_path),
             repair_payload=load_top100_repair_payload(self.config.top100_repair_weights_json_path),
+            quick_mode=quick_mode,
             prediction_csv_path=self.config.top100_prediction_csv_path,
             report_path=self.config.top100_prediction_report_path,
             excel_path=self.config.top100_prediction_excel_path,

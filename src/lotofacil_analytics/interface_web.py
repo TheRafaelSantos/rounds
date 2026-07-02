@@ -568,6 +568,7 @@ def _run_top100_job(config: AppConfig, logger: logging.Logger) -> None:
             draw_hour=20,
             draw_minute=0,
             exhaustive_limit=settings["exhaustive_limit"],
+            quick_mode=True,
         )
         payload = summary.__dict__.copy()
         payload["settings"] = settings
