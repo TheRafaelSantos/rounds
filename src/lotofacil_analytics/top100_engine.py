@@ -481,6 +481,7 @@ def _build_coverage_hedge_candidates(
     existing_nums: Sequence[str],
     *,
     top_count: int,
+    target_rows: int | None = None,
 ) -> pd.DataFrame:
     if int(top_count) < 50:
         return pd.DataFrame()
@@ -488,7 +489,7 @@ def _build_coverage_hedge_candidates(
     low_recent = _recent_low_frequency_numbers(concursos, window=30)
     last_concurso = int(concursos["concurso"].max()) if not concursos.empty else 0
     rng = random.Random(730000 + last_concurso)
-    target_rows = max(1200, int(top_count) * 30)
+    target_rows = int(target_rows) if target_rows is not None else max(1200, int(top_count) * 30)
     rows: List[Dict[str, object]] = []
     seen = set(existing)
     attempts = 0
@@ -897,8 +898,8 @@ def _portfolio_adjusted_score(
         base
         - (overuse_penalty * 1.08)
         - (first_penalty * 1.65)
-        - (late_overuse * 0.55)
-        + (underuse_bonus * 0.10)
+        - (late_overuse * 0.95)
+        + (underuse_bonus * 0.18)
         + first_bonus
         + closure_bonus
         + repair_bonus,
@@ -907,19 +908,21 @@ def _portfolio_adjusted_score(
 
 
 def _first_number_soft_target(position: int, first_number: int) -> float:
-    ratios = {1: 0.28, 2: 0.23, 3: 0.18, 4: 0.14, 5: 0.12}
+    # In sorted 15-number Lotofacil games, "first number = 1" means the
+    # number 01 is present. Its neutral probability is 15/25 = 60%.
+    ratios = {1: 0.60, 2: 0.25, 3: 0.10, 4: 0.04, 5: 0.015}
     return float(position) * ratios.get(int(first_number), 0.10)
 
 
 def _first_number_cap(top_count: int, first_number: int, multiplier: float | None) -> int | None:
     if multiplier is None:
         return None
-    soft_ratios = {1: 0.28, 2: 0.23, 3: 0.18, 4: 0.14, 5: 0.12}
-    hard_ratios = {1: 0.34, 2: 0.28, 3: 0.22, 4: 0.17, 5: 0.15}
+    soft_ratios = {1: 0.60, 2: 0.25, 3: 0.10, 4: 0.04, 5: 0.015}
+    hard_ratios = {1: 0.64, 2: 0.30, 3: 0.14, 4: 0.08, 5: 0.04}
     first = int(first_number)
     soft_cap = ceil(float(top_count) * soft_ratios.get(first, 0.10) * float(multiplier))
     hard_cap = ceil(float(top_count) * hard_ratios.get(first, 0.12))
-    return max(2, min(int(soft_cap), int(hard_cap)))
+    return max(1, min(int(soft_cap), int(hard_cap)))
 
 
 def select_top100_portfolio(candidates: pd.DataFrame, *, top_count: int, max_overlap: int = 13) -> pd.DataFrame:
@@ -931,13 +934,22 @@ def select_top100_portfolio(candidates: pd.DataFrame, *, top_count: int, max_ove
     number_counts: Counter[int] = Counter()
     first_counts: Counter[int] = Counter()
     start_overlap = max(8, min(13, int(max_overlap)))
-    stages = [
-        (start_overlap, ceil(float(top_count) * 0.62), 1.00),
-        (min(15, start_overlap + 1), ceil(float(top_count) * 0.66), 1.08),
-        (min(15, start_overlap + 2), ceil(float(top_count) * 0.70), 1.16),
-        (min(15, start_overlap + 3), ceil(float(top_count) * 0.73), 1.24),
-        (15, ceil(float(top_count) * 0.76), 1.32),
-    ]
+    expected_number_count = float(top_count) * 15.0 / 25.0
+    if int(top_count) >= 50:
+        stages = [
+            (min(12, start_overlap), ceil(expected_number_count + 4), 1.00),
+            (min(12, start_overlap + 1), ceil(expected_number_count + 6), 1.04),
+            (12, ceil(expected_number_count + 8), 1.08),
+            (12, ceil(expected_number_count + 10), 1.12),
+        ]
+    else:
+        stages = [
+            (start_overlap, ceil(float(top_count) * 0.62), 1.00),
+            (min(15, start_overlap + 1), ceil(float(top_count) * 0.66), 1.08),
+            (min(15, start_overlap + 2), ceil(float(top_count) * 0.70), 1.16),
+            (min(15, start_overlap + 3), ceil(float(top_count) * 0.73), 1.24),
+            (15, ceil(float(top_count) * 0.76), 1.32),
+        ]
     for overlap_limit, number_cap, first_cap_multiplier in stages:
         while len(selected) < int(top_count):
             best_row: Dict[str, object] | None = None
@@ -996,43 +1008,69 @@ def select_top100_portfolio(candidates: pd.DataFrame, *, top_count: int, max_ove
             first_counts[best_first] += 1
         if len(selected) >= int(top_count):
             break
-    while len(selected) < int(top_count):
-        best_row = None
-        best_score = None
-        best_overlap = 0
-        best_nums = None
-        for _, row in ranked.iterrows():
-            nums_text = str(row["nums"])
-            if nums_text in selected_nums:
-                continue
-            nums = _parse_nums(nums_text)
-            overlap = _max_overlap_with_selected(nums, selected)
-            adjusted = _portfolio_adjusted_score(
-                row,
-                nums,
-                selected_len=len(selected),
-                top_count=int(top_count),
-                number_counts=number_counts,
-                first_counts=first_counts,
+    fallback_stages = (
+        [(12, ceil(expected_number_count + 10), 1.12), (12, ceil(expected_number_count + 12), 1.16), (13, ceil(expected_number_count + 14), 1.20), (15, None, None)]
+        if int(top_count) >= 50
+        else [(15, None, None)]
+    )
+    for overlap_limit, number_cap, first_cap_multiplier in fallback_stages:
+        while len(selected) < int(top_count):
+            best_row = None
+            best_score = None
+            best_overlap = 0
+            best_nums = None
+            for _, row in ranked.iterrows():
+                nums_text = str(row["nums"])
+                if nums_text in selected_nums:
+                    continue
+                nums = _parse_nums(nums_text)
+                overlap = _max_overlap_with_selected(nums, selected)
+                if selected and overlap > int(overlap_limit):
+                    continue
+                if number_cap is not None and any(number_counts[int(n)] >= int(number_cap) for n in nums):
+                    continue
+                first = min(int(n) for n in nums)
+                first_cap = _first_number_cap(int(top_count), first, first_cap_multiplier)
+                if first_cap is not None and first_counts[first] >= int(first_cap):
+                    continue
+                adjusted = _portfolio_adjusted_score(
+                    row,
+                    nums,
+                    selected_len=len(selected),
+                    top_count=int(top_count),
+                    number_counts=number_counts,
+                    first_counts=first_counts,
+                )
+                if best_score is None or adjusted > best_score:
+                    best_score = adjusted
+                    best_row = row.to_dict()
+                    best_overlap = int(overlap)
+                    best_nums = nums
+            if best_row is None or best_nums is None:
+                break
+            best_first = min(int(n) for n in best_nums)
+            best_row["max_overlap_top100_anterior"] = int(best_overlap)
+            best_row["score_diversidade_top100"] = float(best_score or 0.0)
+            best_row["qtd_dezenas_saturadas_antes"] = int(
+                sum(1 for n in best_nums if number_cap is not None and number_counts[int(n)] >= max(0, int(number_cap) - 1))
             )
-            if best_score is None or adjusted > best_score:
-                best_score = adjusted
-                best_row = row.to_dict()
-                best_overlap = int(overlap)
-                best_nums = nums
-        if best_row is None or best_nums is None:
+            best_row["primeira_dezena_top100"] = int(best_first)
+            best_row["qtd_primeira_dezena_antes"] = int(first_counts[best_first])
+            best_row["criterio_top100"] = (
+                f"ranking_top100_refino_final_overlap<={overlap_limit}"
+                + (f"_cap_dezena<={int(number_cap)}" if number_cap is not None else "_sem_cap_dezena")
+                + (
+                    f"_cap_primeira_dezena<={_first_number_cap(int(top_count), best_first, first_cap_multiplier)}"
+                    if first_cap_multiplier is not None
+                    else "_sem_cap_primeira_dezena"
+                )
+            )
+            selected.append(best_row)
+            selected_nums.add(str(best_row["nums"]))
+            number_counts.update(int(n) for n in best_nums)
+            first_counts[best_first] += 1
+        if len(selected) >= int(top_count):
             break
-        best_first = min(int(n) for n in best_nums)
-        best_row["max_overlap_top100_anterior"] = int(best_overlap)
-        best_row["score_diversidade_top100"] = float(best_score or 0.0)
-        best_row["qtd_dezenas_saturadas_antes"] = 0
-        best_row["primeira_dezena_top100"] = int(best_first)
-        best_row["qtd_primeira_dezena_antes"] = int(first_counts[best_first])
-        best_row["criterio_top100"] = "ranking_top100_preenchimento_final_diverso"
-        selected.append(best_row)
-        selected_nums.add(str(best_row["nums"]))
-        number_counts.update(int(n) for n in best_nums)
-        first_counts[best_first] += 1
     out_df = pd.DataFrame(selected).head(int(top_count)).reset_index(drop=True)
     out_df.insert(0, "rank_top100", range(1, len(out_df) + 1))
     out_df["grupo_top"] = out_df["rank_top100"].map(lambda rank: "top10" if int(rank) <= 10 else ("top50" if int(rank) <= 50 else "top100"))
@@ -1167,7 +1205,13 @@ def build_top100_prediction(
         )
     base_pool = candidates.head(int(analysis_pool)).copy()
     if quick_mode:
-        scored_pool = base_pool.copy()
+        hedge_pool = _build_coverage_hedge_candidates(
+            df,
+            base_pool["nums"].astype(str).tolist() if "nums" in base_pool.columns else [],
+            top_count=int(top_count),
+            target_rows=max(int(top_count) * 8, 800),
+        )
+        scored_pool = pd.concat([base_pool, hedge_pool], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
     else:
         hedge_pool = _build_coverage_hedge_candidates(df, base_pool["nums"].astype(str).tolist() if "nums" in base_pool.columns else [], top_count=int(top_count))
         closure_pool = _build_closure_hedge_candidates(
