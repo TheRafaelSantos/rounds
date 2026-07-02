@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import math
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Lock, Thread
 from typing import Any, Callable
 
 import pandas as pd
@@ -17,6 +19,16 @@ from .supervised_calibration import load_supervised_calibration_status
 from .top50_refinement_pipeline import Top50RefinementPipeline
 from .top100_pipeline import Top100Pipeline
 from .top100_repair_learning import Top100RepairLearningPipeline
+
+
+_TOP100_JOB_LOCK = Lock()
+_TOP100_JOB: dict[str, Any] = {
+    "status": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+    "summary": None,
+}
 
 
 def _html_page() -> str:
@@ -242,6 +254,20 @@ def _html_page() -> str:
         ]) + '</section>' +
       '</section>';
     }
+    function renderTop100Job(data) {
+      return '<section class="calibration-panel">' +
+        '<div class="game-head"><h2>Geração Top 100</h2><span class="tag">' + escapeHtml(data.status || 'sem status') + '</span></div>' +
+        '<div class="status-grid">' +
+          statusCard('Status', data.status || '-') +
+          statusCard('Iniciado em', data.started_at || '-') +
+          statusCard('Finalizado em', data.finished_at || '-') +
+          statusCard('Concurso alvo', data.concurso_alvo || '-') +
+          statusCard('Data concurso', data.data_proximo_concurso || '-') +
+          statusCard('Jogos gerados', data.selected_rows || '-') +
+        '</div>' +
+        '<div class="exclusives"><strong>Como ler:</strong> a geração roda em segundo plano. Você pode deixar esta tela aberta; quando terminar, os 100 jogos aparecem automaticamente.</div>' +
+      '</section>';
+    }
     function refinementWeightRows(rows, columnPrefix) {
       if (!Array.isArray(rows) || rows.length === 0) {
         return '<div class="muted">Sem pesos refinados ainda.</div>';
@@ -392,7 +418,23 @@ def _html_page() -> str:
     }
     async function top100() {
       const data = await request('/api/top100', {method: 'POST'});
-      document.getElementById('games').innerHTML = renderTop100(data);
+      if (data.status === 'complete' && Array.isArray(data.games)) {
+        document.getElementById('games').innerHTML = renderTop100(data);
+        return;
+      }
+      document.getElementById('games').innerHTML = renderTop100Job(data);
+      pollTop100();
+    }
+    async function pollTop100() {
+      const data = await request('/api/top100/status');
+      if (data.status === 'complete' && Array.isArray(data.games)) {
+        document.getElementById('games').innerHTML = renderTop100(data);
+        return;
+      }
+      document.getElementById('games').innerHTML = renderTop100Job(data);
+      if (data.status === 'running' || data.status === 'starting') {
+        window.setTimeout(pollTop100, 10000);
+      }
     }
   </script>
 </body>
@@ -432,6 +474,107 @@ def _read_csv_records(path: Path) -> list[dict[str, Any]]:
         return []
     clean = df.astype(object).where(pd.notna(df), None)
     return clean.to_dict(orient="records")
+
+
+def _top100_payload_from_file(config: AppConfig) -> dict[str, Any]:
+    games = _read_csv_records(config.top100_prediction_csv_path)
+    payload: dict[str, Any] = {
+        "status": "complete" if games else "idle",
+        "games": games,
+    }
+    if games:
+        first = games[0]
+        payload.update(
+            {
+                "concurso_alvo": first.get("concurso_alvo"),
+                "data_proximo_concurso": first.get("data_proximo_concurso"),
+                "generated_at": first.get("generated_at"),
+                "selected_rows": len(games),
+                "top_count": len(games),
+                "top_pool": first.get("top_pool"),
+                "metodo": first.get("metodo") or first.get("source_model") or "top100",
+                "prediction_csv_path": str(config.top100_prediction_csv_path),
+                "report_path": str(config.top100_prediction_report_path),
+                "excel_path": str(config.top100_prediction_excel_path),
+            }
+        )
+    return payload
+
+
+def _top100_job_snapshot(config: AppConfig) -> dict[str, Any]:
+    with _TOP100_JOB_LOCK:
+        snapshot = dict(_TOP100_JOB)
+    if snapshot.get("summary"):
+        summary = snapshot["summary"]
+        if isinstance(summary, dict):
+            snapshot.update(summary)
+    if snapshot.get("status") in {"idle", "complete"}:
+        file_payload = _top100_payload_from_file(config)
+        if file_payload.get("games"):
+            snapshot.update(file_payload)
+    return snapshot
+
+
+def _run_top100_job(config: AppConfig, logger: logging.Logger) -> None:
+    with _TOP100_JOB_LOCK:
+        _TOP100_JOB.update(
+            {
+                "status": "running",
+                "started_at": datetime.now().isoformat(timespec="seconds"),
+                "finished_at": None,
+                "error": None,
+                "summary": None,
+            }
+        )
+    try:
+        summary = Top100Pipeline(config=config, logger=logger).predict(
+            top_count=100,
+            top_pool=10000,
+            max_overlap=11,
+            draw_hour=20,
+            draw_minute=0,
+            exhaustive_limit=None,
+        )
+        payload = summary.__dict__.copy()
+        payload["games"] = _read_csv_records(config.top100_prediction_csv_path)
+        with _TOP100_JOB_LOCK:
+            _TOP100_JOB.update(
+                {
+                    "status": "complete",
+                    "finished_at": datetime.now().isoformat(timespec="seconds"),
+                    "error": None,
+                    "summary": payload,
+                }
+            )
+    except Exception as exc:
+        logger.exception("Erro ao gerar Top100 em segundo plano: %s", exc)
+        with _TOP100_JOB_LOCK:
+            _TOP100_JOB.update(
+                {
+                    "status": "error",
+                    "finished_at": datetime.now().isoformat(timespec="seconds"),
+                    "error": str(exc),
+                    "summary": None,
+                }
+            )
+
+
+def _start_top100_job(config: AppConfig, logger: logging.Logger) -> dict[str, Any]:
+    with _TOP100_JOB_LOCK:
+        if _TOP100_JOB.get("status") == "running":
+            return dict(_TOP100_JOB)
+        _TOP100_JOB.update(
+            {
+                "status": "starting",
+                "started_at": datetime.now().isoformat(timespec="seconds"),
+                "finished_at": None,
+                "error": None,
+                "summary": None,
+            }
+        )
+    worker = Thread(target=_run_top100_job, args=(config, logger), daemon=True)
+    worker.start()
+    return _top100_job_snapshot(config)
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> None:
@@ -475,6 +618,9 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                     }
                 )
                 return
+            if self.path == "/api/top100/status":
+                self._handle_json(lambda: _top100_job_snapshot(config))
+                return
             if self.path == "/top100-report":
                 report_path = config.top100_prediction_report_path
                 if not report_path.exists():
@@ -498,20 +644,7 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 self._handle_json(lambda: ClimatePipeline(config=config, logger=logger).run(draw_hour=20, draw_minute=0).__dict__)
                 return
             if self.path == "/api/top100":
-                def top100_payload() -> dict:
-                    summary = Top100Pipeline(config=config, logger=logger).predict(
-                        top_count=100,
-                        top_pool=10000,
-                        max_overlap=11,
-                        draw_hour=20,
-                        draw_minute=0,
-                        exhaustive_limit=None,
-                    )
-                    payload = summary.__dict__.copy()
-                    payload["games"] = _read_csv_records(config.top100_prediction_csv_path)
-                    return payload
-
-                self._handle_json(top100_payload)
+                self._handle_json(lambda: _start_top100_job(config, logger))
                 return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})
 
@@ -520,9 +653,14 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 payload = fn()
                 serializable = _json_safe(payload)
                 _json_response(self, HTTPStatus.OK, serializable)
+            except BrokenPipeError:
+                logger.warning("Cliente fechou a conexao antes da resposta JSON.")
             except Exception as exc:
                 logger.exception("Erro na interface web: %s", exc)
-                _json_response(self, HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
+                try:
+                    _json_response(self, HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
+                except BrokenPipeError:
+                    logger.warning("Cliente fechou a conexao antes da resposta de erro.")
 
     return LotofacilHandler
 
