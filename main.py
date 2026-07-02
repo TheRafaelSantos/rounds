@@ -25,6 +25,7 @@ from lotofacil_analytics.export_full import export_full_workbook
 from lotofacil_analytics.final_backtest_pipeline import FinalBacktestPipeline
 from lotofacil_analytics.features_pipeline import FeaturePipeline
 from lotofacil_analytics.games_pipeline import GeneratedGamesPipeline
+from lotofacil_analytics.learning_pipeline import UnifiedLearningPipeline
 from lotofacil_analytics.logger import setup_logger
 from lotofacil_analytics.mandel_pipeline import MandelPipeline
 from lotofacil_analytics.ml_pipeline import MLPipeline
@@ -37,6 +38,7 @@ from lotofacil_analytics.supervised_calibration_pipeline import SupervisedCalibr
 from lotofacil_analytics.top50_refinement_pipeline import Top50RefinementPipeline
 from lotofacil_analytics.top100_pipeline import Top100Pipeline
 from lotofacil_analytics.top100_repair_learning import Top100RepairLearningPipeline
+from lotofacil_analytics.top100_walkforward_learning import Top100WalkForwardLearningPipeline
 from lotofacil_analytics.transition_pipeline import TransitionPipeline
 from lotofacil_analytics.temporal_deep_pipeline import TemporalDeepPipeline
 
@@ -82,6 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--supervised-calibration", action="store_true", help="Roda aprendizado supervisionado com gabarito historico e aplica pesos medios ao motor.")
     mode.add_argument("--refine-top50", action="store_true", help="Roda Motor 3.0 Refinador Top50 pos-erro contra hard negatives historicos.")
     mode.add_argument("--top100-repair-learn", action="store_true", help="Aprende reparos de quase-acertos Top100 em concursos ja encerrados.")
+    mode.add_argument("--top100-walkforward-learn", action="store_true", help="Aprende Top100 concurso a concurso por walk-forward historico.")
+    mode.add_argument("--learning", action="store_true", help="Roda aprendizado unificado: supervisionado, Top50, Top100 walk-forward e reparo.")
     mode.add_argument("--top100", action="store_true", help="Gera ranking Top 100 / Top 50 com estudos avancados.")
     mode.add_argument("--top100-backtest", action="store_true", help="Valida historicamente o ranking Top 100 / Top 50.")
     mode.add_argument("--append-result", action="store_true", help="Anexa manualmente um resultado quando a API remota ainda nao retornou o concurso.")
@@ -168,6 +172,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top100-repair-prediction-file", default=None, help="CSV Top100 especifico para aprendizado manual de reparo.")
     parser.add_argument("--top100-repair-loop", action="store_true", help="Mantem o aprendizado de reparo Top100 rodando em ciclos.")
     parser.add_argument("--top100-repair-sleep-seconds", type=int, default=30, help="Pausa entre ciclos do --top100-repair-loop.")
+    parser.add_argument("--top100-learning-from-concurso", type=int, default=1, help="Concurso inicial do --top100-walkforward-learn.")
+    parser.add_argument("--top100-learning-to-concurso", type=int, default=None, help="Concurso final do --top100-walkforward-learn; omitido usa ultimo local.")
+    parser.add_argument("--top100-learning-max-contests", type=int, default=3, help="Maximo de concursos Top100 aprendidos por execucao; 0 processa todos.")
+    parser.add_argument("--top100-learning-min-history", type=int, default=10, help="Historico minimo anterior para cada concurso Top100.")
+    parser.add_argument("--top100-learning-pool", type=int, default=500, help="Pool de candidatos fortes por concurso no aprendizado Top100.")
+    parser.add_argument("--top100-learning-exhaustive-limit", type=int, default=3000, help="Limite tecnico de combinacoes no aprendizado Top100; 0 avalia todas.")
+    parser.add_argument("--top100-learning-reset", action="store_true", help="Apaga a memoria anterior do aprendizado Top100.")
+    parser.add_argument("--learning-loop", action="store_true", help="Mantem o aprendizado unificado rodando em ciclos.")
+    parser.add_argument("--learning-sleep-seconds", type=int, default=30, help="Pausa entre ciclos do --learning-loop.")
+    parser.add_argument("--learning-reset", action="store_true", help="Apaga memoria dos aprendizados no proximo ciclo unificado.")
     parser.add_argument("--host", default="127.0.0.1", help="Host da interface web local.")
     parser.add_argument("--port", type=int, default=8765, help="Porta da interface web local.")
     return parser
@@ -209,6 +223,8 @@ def main() -> int:
         or args.supervised_calibration
         or args.refine_top50
         or args.top100_repair_learn
+        or args.top100_walkforward_learn
+        or args.learning
         or args.top100
         or args.top100_backtest
         or args.append_result
@@ -451,6 +467,42 @@ def main() -> int:
                 prediction_file=prediction_file,
                 actual_numbers=actual_numbers,
                 concurso=args.result_concurso,
+            )
+        elif args.top100_walkforward_learn:
+            top100_learning_limit = args.top100_learning_exhaustive_limit if int(args.top100_learning_exhaustive_limit) > 0 else None
+            summary = Top100WalkForwardLearningPipeline(config=config, logger=logger).run(
+                from_concurso=args.top100_learning_from_concurso,
+                to_concurso=args.top100_learning_to_concurso,
+                max_contests=args.top100_learning_max_contests,
+                min_history=args.top100_learning_min_history,
+                top_count=args.top100_count,
+                top_pool=args.top100_learning_pool,
+                max_overlap=args.top100_max_overlap,
+                exhaustive_limit=top100_learning_limit,
+                seed=args.seed,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+                reset=args.top100_learning_reset,
+            )
+        elif args.learning:
+            learning_pipeline = UnifiedLearningPipeline(config=config, logger=logger)
+            if args.learning_loop:
+                reset_next_cycle = bool(args.learning_reset)
+                while True:
+                    summary = learning_pipeline.run_once(
+                        seed=args.seed,
+                        draw_hour=args.draw_hour,
+                        draw_minute=args.draw_minute,
+                        reset=reset_next_cycle,
+                    )
+                    print(summary.to_console(), flush=True)
+                    reset_next_cycle = False
+                    time.sleep(max(5, int(args.learning_sleep_seconds)))
+            summary = learning_pipeline.run_once(
+                seed=args.seed,
+                draw_hour=args.draw_hour,
+                draw_minute=args.draw_minute,
+                reset=args.learning_reset,
             )
         elif args.top100:
             summary = Top100Pipeline(config=config, logger=logger).predict(

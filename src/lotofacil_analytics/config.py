@@ -421,3 +421,35 @@ class AppConfig:
     @property
     def top100_repair_summary_csv_path(self) -> Path:
         return self.processed_dir / "lotofacil_top100_repair_summary.csv"
+
+    @property
+    def unified_learning_state_json_path(self) -> Path:
+        return self.processed_dir / "lotofacil_learning_state.json"
+
+    @property
+    def unified_learning_lock_dir(self) -> Path:
+        return self.processed_dir / "lotofacil_learning.lock"
+
+    @property
+    def top100_learning_state_json_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top100_learning_state.json"
+
+    @property
+    def top100_learning_results_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top100_learning_results.csv"
+
+    @property
+    def top100_learning_summary_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top100_learning_summary.csv"
+
+    @property
+    def top100_learning_weights_csv_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top100_learning_weights.csv"
+
+    @property
+    def top100_learning_weights_json_path(self) -> Path:
+        return self.processed_dir / "lotofacil_top100_learning_weights.json"
+
+    @property
+    def top100_learning_excel_path(self) -> Path:
+        return self.exports_dir / "lotofacil_top100_learning.xlsx"

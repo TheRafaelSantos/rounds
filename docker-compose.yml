@@ -15,26 +15,18 @@ services:
       - ./logs:/app/logs
     restart: unless-stopped
 
-  lotofacil-supervised:
+  lotofacil-learning:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: lotofacil-supervised
+    container_name: lotofacil-learning
     command:
       [
         "python",
         "main.py",
-        "--supervised-calibration",
-        "--supervised-loop",
-        "--supervised-from-concurso",
-        "1",
-        "--supervised-min-history",
-        "10",
-        "--supervised-samples",
-        "800",
-        "--supervised-max-contests",
-        "25",
-        "--supervised-sleep-seconds",
+        "--learning",
+        "--learning-loop",
+        "--learning-sleep-seconds",
         "30",
         "--draw-hour",
         "20",
@@ -44,68 +36,15 @@ services:
     environment:
       TZ: America/Sao_Paulo
       PYTHONPATH: /app/src
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-    restart: unless-stopped
-
-  lotofacil-top50-refiner:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: lotofacil-top50-refiner
-    command:
-      [
-        "python",
-        "main.py",
-        "--refine-top50",
-        "--top50-refine-loop",
-        "--top50-refine-from-concurso",
-        "1",
-        "--top50-refine-min-history",
-        "300",
-        "--top50-refine-pool",
-        "2000",
-        "--top50-refine-exhaustive-limit",
-        "50000",
-        "--top50-refine-max-contests",
-        "5",
-        "--top50-refine-sleep-seconds",
-        "30",
-        "--draw-hour",
-        "20",
-        "--draw-minute",
-        "0"
-      ]
-    environment:
-      TZ: America/Sao_Paulo
-      PYTHONPATH: /app/src
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-    restart: unless-stopped
-
-  lotofacil-top100-repair:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: lotofacil-top100-repair
-    command:
-      [
-        "python",
-        "main.py",
-        "--top100-repair-learn",
-        "--top100-repair-loop",
-        "--top100-repair-max-contests",
-        "10",
-        "--top100-repair-min-hits",
-        "11",
-        "--top100-repair-sleep-seconds",
-        "30"
-      ]
-    environment:
-      TZ: America/Sao_Paulo
-      PYTHONPATH: /app/src
+      LOTOFACIL_LEARNING_SUPERVISED_MAX: "25"
+      LOTOFACIL_LEARNING_SUPERVISED_SAMPLES: "800"
+      LOTOFACIL_LEARNING_TOP50_MAX: "5"
+      LOTOFACIL_LEARNING_TOP50_POOL: "2000"
+      LOTOFACIL_LEARNING_TOP50_EXHAUSTIVE_LIMIT: "50000"
+      LOTOFACIL_LEARNING_TOP100_MAX: "3"
+      LOTOFACIL_LEARNING_TOP100_POOL: "500"
+      LOTOFACIL_LEARNING_TOP100_EXHAUSTIVE_LIMIT: "3000"
+      LOTOFACIL_LEARNING_REPAIR_MAX: "10"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs

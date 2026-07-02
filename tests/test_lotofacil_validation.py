@@ -44,6 +44,7 @@ from lotofacil_analytics.temporal_deep import build_temporal_deep_rows, temporal
 from lotofacil_analytics.top50_refinement_engine import load_top50_refinement_status, run_top50_refinement
 from lotofacil_analytics.top100_engine import build_top100_prediction, run_top100_backtest, select_top100_portfolio
 from lotofacil_analytics.top100_repair_learning import learn_from_prediction
+from lotofacil_analytics.top100_walkforward_learning import Top100WalkForwardLearningPipeline
 from lotofacil_analytics.normalize import normalize_contest
 from lotofacil_analytics.transition_analysis import build_transition_model, build_transition_outputs, score_transition_candidate
 from lotofacil_analytics.validators import DataValidationError, validate_contest_record, validate_dataset
@@ -974,6 +975,43 @@ class LotofacilValidationTest(unittest.TestCase):
             self.assertIn(number, payload["add_scores"])
         for number in ["12", "13", "14", "15"]:
             self.assertIn(number, payload["remove_scores"])
+
+    def test_top100_walkforward_learning_writes_outputs(self) -> None:
+        rows = []
+        for idx in range(1, 18):
+            payload = payload_with_dezenas(idx, cyclic_dezenas(idx))
+            payload["nomeMunicipioUFSorteio"] = "SAO PAULO, SP"
+            payload["localSorteio"] = "ESPAÇO DA SORTE"
+            rows.append(normalize_contest(payload))
+        concursos = pd.DataFrame(rows)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            config = AppConfig.from_base_dir(base)
+            summary = Top100WalkForwardLearningPipeline(config=config, logger=logging.getLogger("test"))._run_with_data(
+                concursos=concursos,
+                climate_features=pd.DataFrame(),
+                from_concurso=14,
+                to_concurso=14,
+                max_contests=1,
+                min_history=10,
+                top_count=5,
+                top_pool=20,
+                max_overlap=14,
+                exhaustive_limit=300,
+                seed=123,
+                draw_hour=20,
+                draw_minute=0,
+                reset=True,
+            )
+
+            self.assertEqual(summary.total_contests_processed, 1)
+            self.assertTrue(config.top100_learning_weights_json_path.exists())
+            self.assertTrue(config.top100_learning_results_csv_path.exists())
+            self.assertTrue(config.top100_learning_excel_path.exists())
+            results = pd.read_csv(config.top100_learning_results_csv_path)
+            self.assertIn("best_hits_top100", results.columns)
+            self.assertIn("rank_diagnostico_aprendido", results.columns)
 
     def test_top100_portfolio_diversifies_overused_numbers(self) -> None:
         rows = []

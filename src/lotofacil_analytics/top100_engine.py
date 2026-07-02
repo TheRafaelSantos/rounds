@@ -26,6 +26,7 @@ from .selection_guard import enrich_candidates_with_decision_guard
 from .storage import sanitize_dataframe_for_tabular_output
 from .supervised_calibration import _apply_weights, _score_candidate_table
 from .top50_refinement import apply_top50_refinement
+from .top100_learning import apply_top100_learning
 
 
 NUMBERS = tuple(range(1, 26))
@@ -813,6 +814,7 @@ def enrich_candidates_with_top100_scores(
     concursos: pd.DataFrame,
     *,
     refinement_payload: Mapping[str, object] | None = None,
+    top100_learning_payload: Mapping[str, object] | None = None,
 ) -> pd.DataFrame:
     if candidates.empty:
         return candidates.copy()
@@ -836,6 +838,7 @@ def enrich_candidates_with_top100_scores(
     enriched = pd.DataFrame(rows)
     enriched["score_top100"] = pd.to_numeric(enriched["score_learning_to_rank"], errors="coerce").fillna(0.0)
     enriched = apply_top50_refinement(enriched, refinement_payload, override_score_top100=True)
+    enriched = apply_top100_learning(enriched, top100_learning_payload, override_score_top100=True)
     enriched = enriched.sort_values(["score_top100", "score_final", "nums"], ascending=[False, False, True]).reset_index(drop=True)
     enriched.insert(0, "rank_top100_pool", range(1, len(enriched) + 1))
     return enriched
@@ -1090,8 +1093,10 @@ def _build_report(
     target_context: object,
     weights: Mapping[str, float],
     refinement_payload: Mapping[str, object] | None = None,
+    top100_learning_payload: Mapping[str, object] | None = None,
 ) -> str:
     refinement_metrics = refinement_payload.get("metrics", {}) if isinstance(refinement_payload, dict) and isinstance(refinement_payload.get("metrics"), dict) else {}
+    top100_learning_metrics = top100_learning_payload.get("metrics", {}) if isinstance(top100_learning_payload, dict) and isinstance(top100_learning_payload.get("metrics"), dict) else {}
     lines = [
         "# Relatorio tecnico - Motor Top 100 / Top 50",
         "",
@@ -1106,6 +1111,9 @@ def _build_report(
         f"Refinador Top50 modelo: {refinement_payload.get('model', '-') if isinstance(refinement_payload, dict) else '-'}",
         f"Refinador Top50 rank medio historico antes/depois: {refinement_metrics.get('rank_before_avg', '-')} / {refinement_metrics.get('rank_after_avg', '-')}",
         f"Refinador Top50 Hit@50 historico antes/depois: {refinement_metrics.get('hit_top50_before', '-')}% / {refinement_metrics.get('hit_top50_after', '-')}%",
+        f"Aprendizado Top100 aplicado: {'sim' if top100_learning_payload else 'nao'}",
+        f"Aprendizado Top100 modelo: {top100_learning_payload.get('model', '-') if isinstance(top100_learning_payload, dict) else '-'}",
+        f"Aprendizado Top100 melhor acerto medio: {top100_learning_metrics.get('best_hits_avg', '-')}",
         "",
         "## Contexto",
         "",
@@ -1129,6 +1137,7 @@ def _build_report(
         "10. score learning-to-rank interno para reordenar os candidatos;",
         "11. refinador Top50 pos-erro, quando treinado, para subir gabaritos historicos contra falsos positivos.",
         "12. reparo Top100 por quase-acerto, quando treinado, para trocar dezenas provaveis de sair/entrar a partir de concursos encerrados.",
+        "13. aprendizado walk-forward Top100, quando treinado, para ajustar o ranking dos 100 jogos concurso a concurso.",
         "",
         "## Top 100",
         "",
@@ -1168,6 +1177,7 @@ def build_top100_prediction(
     weights: Mapping[str, float] | None,
     refinement_payload: Mapping[str, object] | None = None,
     repair_payload: Mapping[str, object] | None = None,
+    top100_learning_payload: Mapping[str, object] | None = None,
     quick_mode: bool = False,
     prediction_csv_path: Path,
     report_path: Path,
@@ -1221,18 +1231,27 @@ def build_top100_prediction(
             top_count=int(top_count),
         )
         scored_pool = pd.concat([base_pool, hedge_pool, closure_pool], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
-    enriched = enrich_candidates_with_top100_scores(scored_pool, df, refinement_payload=refinement_payload)
-    if not quick_mode:
-        preliminary_games = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
-        repair_pool = _build_top100_repair_swap_candidates(
-            preliminary_games,
-            repair_payload,
-            list(scored_pool["nums"].astype(str)) + list(preliminary_games["nums"].astype(str)),
-            top_count=int(top_count),
+    enriched = enrich_candidates_with_top100_scores(
+        scored_pool,
+        df,
+        refinement_payload=refinement_payload,
+        top100_learning_payload=top100_learning_payload,
+    )
+    preliminary_games = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
+    repair_pool = _build_top100_repair_swap_candidates(
+        preliminary_games,
+        repair_payload,
+        list(scored_pool["nums"].astype(str)) + list(preliminary_games["nums"].astype(str)),
+        top_count=int(top_count),
+    )
+    if not repair_pool.empty:
+        repair_enriched = enrich_candidates_with_top100_scores(
+            repair_pool,
+            df,
+            refinement_payload=refinement_payload,
+            top100_learning_payload=top100_learning_payload,
         )
-        if not repair_pool.empty:
-            repair_enriched = enrich_candidates_with_top100_scores(repair_pool, df, refinement_payload=refinement_payload)
-            enriched = pd.concat([enriched, repair_enriched], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
+        enriched = pd.concat([enriched, repair_enriched], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
     final_games = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
     generated_at = datetime.now().isoformat(timespec="seconds")
     final_games.insert(0, "generated_at", generated_at)
@@ -1262,6 +1281,7 @@ def build_top100_prediction(
             target_context=target_context,
             weights=resolved_weights,
             refinement_payload=refinement_payload,
+            top100_learning_payload=top100_learning_payload,
         ),
         encoding="utf-8",
     )
@@ -1310,6 +1330,7 @@ def run_top100_backtest(
     exhaustive_limit: int | None,
     weights: Mapping[str, float] | None,
     refinement_payload: Mapping[str, object] | None = None,
+    top100_learning_payload: Mapping[str, object] | None = None,
     results_csv_path: Path,
     summary_csv_path: Path,
     excel_path: Path,
@@ -1357,7 +1378,12 @@ def run_top100_backtest(
             top_count=int(top_count),
         )
         scored_pool = pd.concat([base_pool, hedge_pool, closure_pool], ignore_index=True).drop_duplicates(subset=["nums"], keep="first")
-        enriched = enrich_candidates_with_top100_scores(scored_pool, train_df, refinement_payload=refinement_payload)
+        enriched = enrich_candidates_with_top100_scores(
+            scored_pool,
+            train_df,
+            refinement_payload=refinement_payload,
+            top100_learning_payload=top100_learning_payload,
+        )
         selected = select_top100_portfolio(enriched, top_count=int(top_count), max_overlap=int(max_overlap))
         selected_nums = set(str(value) for value in selected["nums"].tolist())
         actual_row = _actual_candidate_row(
@@ -1373,6 +1399,7 @@ def run_top100_backtest(
             diagnostic_pool,
             train_df,
             refinement_payload=refinement_payload,
+            top100_learning_payload=top100_learning_payload,
         ).sort_values(
             ["score_top100", "score_final", "nums"], ascending=[False, False, True]
         ).reset_index(drop=True)

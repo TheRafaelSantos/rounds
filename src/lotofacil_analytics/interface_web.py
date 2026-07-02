@@ -15,11 +15,9 @@ import pandas as pd
 
 from .climate_pipeline import ClimatePipeline
 from .config import AppConfig
+from .learning_pipeline import UnifiedLearningPipeline
 from .pipeline import LotofacilPipeline
-from .supervised_calibration import load_supervised_calibration_status
-from .top50_refinement_pipeline import Top50RefinementPipeline
 from .top100_pipeline import Top100Pipeline
-from .top100_repair_learning import Top100RepairLearningPipeline
 
 
 _TOP100_JOB_LOCK = Lock()
@@ -34,6 +32,14 @@ _WEB_TOP100_TOP_COUNT = 100
 _WEB_TOP100_TOP_POOL_DEFAULT = 500
 _WEB_TOP100_EXHAUSTIVE_LIMIT_DEFAULT = 3000
 _WEB_TOP100_MAX_OVERLAP_DEFAULT = 11
+_LEARNING_JOB_LOCK = Lock()
+_LEARNING_JOB: dict[str, Any] = {
+    "status": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+    "summary": None,
+}
 
 
 def _env_int(name: str, default: int, *, minimum: int) -> int:
@@ -405,16 +411,78 @@ def _html_page() -> str:
         ]) + '</section>' +
       '</section>';
     }
+    function renderTop100Walkforward(data) {
+      const state = data.state || {};
+      const recent = data.recent_results || [];
+      const best = data.best_results || [];
+      const blocks = data.progress_blocks || [];
+      const weights = data.weights || [];
+      return '<section class="calibration-panel">' +
+        '<div class="game-head"><h2>Aprendizado walk-forward Top100</h2><span class="tag">' + escapeHtml(state.status || 'sem status') + '</span></div>' +
+        '<div class="status-grid">' +
+          statusCard('Concurso atual', state.current_concurso || '-') +
+          statusCard('Último processado', state.last_concurso || '-') +
+          statusCard('Concursos aprendidos', state.total_contests_processed || 0) +
+          statusCard('Progresso elegível', state.progress_percent !== undefined ? Number(state.progress_percent).toFixed(2) + '%' : '-') +
+          statusCard('Pendentes elegíveis', state.remaining_eligible_count ?? '-') +
+          statusCard('Próximo pendente', state.next_pending_concurso || '-') +
+          statusCard('Melhor acerto médio', state.best_hits_avg ?? '-') +
+          statusCard('Melhor acerto máximo', state.best_hits_max ?? '-') +
+          statusCard('Hit Top100 exato', state.hit_top100 || 0) +
+          statusCard('Hit Top100 %', state.hit_top100_pct !== undefined ? Number(state.hit_top100_pct).toFixed(4) + '%' : '-') +
+          statusCard('Rank diag. antes', state.rank_before_avg ?? '-') +
+          statusCard('Rank diag. aprendido', state.rank_after_avg ?? '-') +
+          statusCard('Último melhor acerto', state.last_best_hits_top100 ?? '-') +
+          statusCard('Tempo execução atual', state.elapsed_seconds_current_run ? Number(state.elapsed_seconds_current_run).toFixed(0) + 's' : '-') +
+        '</div>' +
+        '<div class="exclusives"><strong>Como ler:</strong> para cada concurso encerrado, o motor gera 100 jogos sem saber o resultado, mede o melhor acerto e só depois usa o gabarito para aprender pesos para os próximos concursos.</div>' +
+        '<section class="comparison"><h2>Pesos aprendidos para o Top100</h2>' + tableRows(weights, [
+          {key: 'feature', label: 'Sinal'},
+          {key: 'peso_positivo_percentual', label: 'Peso positivo %'},
+          {key: 'peso_penalizador_percentual', label: 'Peso penalizador %'}
+        ]) + '</section>' +
+        '<section class="comparison"><h2>Evolução Top100 por blocos</h2>' + tableRows(blocks, [
+          {key: 'bloco', label: 'Bloco'},
+          {key: 'concursos', label: 'Concursos'},
+          {key: 'melhor_acerto_medio', label: 'Melhor acerto médio'},
+          {key: 'melhor_acerto_maximo', label: 'Máximo'},
+          {key: 'rank_antes_medio', label: 'Rank antes'},
+          {key: 'rank_aprendido_medio', label: 'Rank aprendido'},
+          {key: 'hit_top100_pct', label: 'Hit Top100 %'}
+        ]) + '</section>' +
+        '<section class="comparison"><h2>Melhores concursos Top100</h2>' + tableRows(best, [
+          {key: 'concurso', label: 'Concurso'},
+          {key: 'best_hits_top100', label: 'Melhor acerto'},
+          {key: 'best_rank_top100', label: 'Rank'},
+          {key: 'best_game_top100', label: 'Melhor jogo'},
+          {key: 'jogo_real', label: 'Jogo real'}
+        ]) + '</section>' +
+        '<section class="comparison"><h2>Últimos concursos Top100 aprendidos</h2>' + tableRows(recent, [
+          {key: 'concurso', label: 'Concurso'},
+          {key: 'best_hits_top100', label: 'Melhor acerto'},
+          {key: 'hit_top100', label: 'Acertou 15 exato'},
+          {key: 'near_miss_11plus', label: '11+ acertos'},
+          {key: 'rank_diagnostico_antes', label: 'Rank antes'},
+          {key: 'rank_diagnostico_aprendido', label: 'Rank aprendido'},
+          {key: 'jogo_real', label: 'Jogo real'}
+        ]) + '</section>' +
+      '</section>';
+    }
     function renderLearning(data) {
+      const unified = data.unified || {};
       const supervised = data.supervised || {};
       const top50 = data.top50 || {};
+      const top100Walkforward = data.top100_walkforward || {};
       const top100Repair = data.top100_repair || {};
       const supervisedState = supervised.state || {};
       const top50State = top50.state || {};
+      const top100State = top100Walkforward.state || {};
       const repairState = top100Repair.state || {};
       return '<section class="calibration-panel">' +
         '<div class="game-head"><h2>Aprendizado unificado</h2><span class="tag">motor 3.0</span></div>' +
         '<div class="status-grid">' +
+          statusCard('Ciclo unificado', unified.status || '-') +
+          statusCard('Lock ativo', data.lock_active ? 'sim' : 'não') +
           statusCard('Supervisionado', supervisedState.status || '-') +
           statusCard('Supervisionado progresso', supervisedState.progress_percent !== undefined ? Number(supervisedState.progress_percent).toFixed(2) + '%' : '-') +
           statusCard('Supervisionado rank depois', supervisedState.rank_after_avg ?? '-') +
@@ -423,14 +491,18 @@ def _html_page() -> str:
           statusCard('Top50 rank refinado', top50State.rank_after_avg ?? '-') +
           statusCard('Top50 Hit@50', top50State.hit_top50_after !== undefined ? Number(top50State.hit_top50_after).toFixed(2) + '%' : '-') +
           statusCard('Top50 Hit@100', top50State.hit_top100_after !== undefined ? Number(top50State.hit_top100_after).toFixed(2) + '%' : '-') +
+          statusCard('Top100 walk-forward', top100State.status || '-') +
+          statusCard('Top100 progresso', top100State.progress_percent !== undefined ? Number(top100State.progress_percent).toFixed(2) + '%' : '-') +
+          statusCard('Top100 melhor médio', top100State.best_hits_avg ?? '-') +
           statusCard('Reparo Top100', repairState.status || '-') +
           statusCard('Reparo concursos', repairState.learned_contests_count || 0) +
           statusCard('Reparo melhor quase-acerto', repairState.best_hits_seen || '-') +
         '</div>' +
-        '<div class="exclusives"><strong>Como ler:</strong> este botão centraliza todos os aprendizados. Os serviços 24/7 continuam treinando por trás; aqui você acompanha o estado consolidado sem precisar escolher entre painéis separados.</div>' +
+        '<div class="exclusives"><strong>Como ler:</strong> este botão inicia e acompanha o ciclo completo de aprendizado. Ele roda em blocos pequenos para continuar de onde parou e não travar a interface.</div>' +
       '</section>' +
       renderSupervised(supervised) +
       renderTop50Refinement(top50) +
+      renderTop100Walkforward(top100Walkforward) +
       renderTop100Repair(top100Repair);
     }
     async function request(path, options) {
@@ -445,8 +517,17 @@ def _html_page() -> str:
     async function updateBase() { await request('/api/update', {method: 'POST'}); }
     async function climate() { await request('/api/climate', {method: 'POST'}); }
     async function learning() {
+      const data = await request('/api/learning', {method: 'POST'});
+      document.getElementById('games').innerHTML = renderLearning(data);
+      pollLearning();
+    }
+    async function pollLearning() {
       const data = await request('/api/learning/status');
       document.getElementById('games').innerHTML = renderLearning(data);
+      const unifiedStatus = String((data.unified || {}).status || '');
+      if (unifiedStatus === 'running' || unifiedStatus === 'starting' || unifiedStatus === 'already_running' || data.lock_active) {
+        window.setTimeout(pollLearning, 10000);
+      }
     }
     async function top100() {
       const data = await request('/api/top100', {method: 'POST'});
@@ -615,6 +696,81 @@ def _start_top100_job(config: AppConfig, logger: logging.Logger) -> dict[str, An
     return _top100_job_snapshot(config)
 
 
+def _learning_status_payload(config: AppConfig, logger: logging.Logger) -> dict[str, Any]:
+    payload = UnifiedLearningPipeline(config=config, logger=logger).status()
+    with _LEARNING_JOB_LOCK:
+        snapshot = dict(_LEARNING_JOB)
+    payload["web_job"] = snapshot
+    if snapshot.get("status") in {"running", "starting"}:
+        unified = payload.get("unified", {}) if isinstance(payload.get("unified"), dict) else {}
+        unified["status"] = snapshot.get("status")
+        unified["web_started_at"] = snapshot.get("started_at")
+        payload["unified"] = unified
+    return payload
+
+
+def _run_learning_job(config: AppConfig, logger: logging.Logger) -> None:
+    with _LEARNING_JOB_LOCK:
+        _LEARNING_JOB.update(
+            {
+                "status": "running",
+                "started_at": datetime.now().isoformat(timespec="seconds"),
+                "finished_at": None,
+                "error": None,
+                "summary": None,
+            }
+        )
+    try:
+        summary = UnifiedLearningPipeline(config=config, logger=logger).run_once(
+            seed=123,
+            draw_hour=20,
+            draw_minute=0,
+            reset=False,
+        )
+        with _LEARNING_JOB_LOCK:
+            _LEARNING_JOB.update(
+                {
+                    "status": "complete",
+                    "finished_at": datetime.now().isoformat(timespec="seconds"),
+                    "error": None,
+                    "summary": summary.__dict__.copy(),
+                }
+            )
+    except Exception as exc:
+        logger.exception("Erro ao rodar aprendizado unificado em segundo plano: %s", exc)
+        with _LEARNING_JOB_LOCK:
+            _LEARNING_JOB.update(
+                {
+                    "status": "error",
+                    "finished_at": datetime.now().isoformat(timespec="seconds"),
+                    "error": str(exc),
+                    "summary": None,
+                }
+            )
+
+
+def _start_learning_job(config: AppConfig, logger: logging.Logger) -> dict[str, Any]:
+    already_running = False
+    with _LEARNING_JOB_LOCK:
+        if _LEARNING_JOB.get("status") in {"running", "starting"}:
+            already_running = True
+        else:
+            _LEARNING_JOB.update(
+                {
+                    "status": "starting",
+                    "started_at": datetime.now().isoformat(timespec="seconds"),
+                    "finished_at": None,
+                    "error": None,
+                    "summary": None,
+                }
+            )
+    if already_running:
+        return _learning_status_payload(config, logger)
+    worker = Thread(target=_run_learning_job, args=(config, logger), daemon=True)
+    worker.start()
+    return _learning_status_payload(config, logger)
+
+
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> None:
     body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
     handler.send_response(status)
@@ -642,19 +798,7 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 self._handle_json(lambda: LotofacilPipeline(config=config, logger=logger).status().__dict__)
                 return
             if self.path == "/api/learning/status":
-                self._handle_json(
-                    lambda: {
-                        "supervised": load_supervised_calibration_status(
-                            state_json_path=config.supervised_calibration_state_json_path,
-                            results_csv_path=config.supervised_calibration_results_csv_path,
-                            summary_csv_path=config.supervised_calibration_summary_csv_path,
-                            weights_csv_path=config.supervised_calibration_weights_csv_path,
-                            weights_json_path=config.supervised_calibration_weights_json_path,
-                        ),
-                        "top50": Top50RefinementPipeline(config=config, logger=logger).status(),
-                        "top100_repair": Top100RepairLearningPipeline(config=config, logger=logger).status(),
-                    }
-                )
+                self._handle_json(lambda: _learning_status_payload(config, logger))
                 return
             if self.path == "/api/top100/status":
                 self._handle_json(lambda: _top100_job_snapshot(config))
@@ -683,6 +827,9 @@ def make_handler(config: AppConfig, logger: logging.Logger) -> type[BaseHTTPRequ
                 return
             if self.path == "/api/top100":
                 self._handle_json(lambda: _start_top100_job(config, logger))
+                return
+            if self.path == "/api/learning":
+                self._handle_json(lambda: _start_learning_job(config, logger))
                 return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "rota nao encontrada"})
 
