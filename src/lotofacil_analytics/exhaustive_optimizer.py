@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import heapq
 import math
+import random
 from collections import Counter
 from itertools import combinations
-from typing import Dict, List, Mapping, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import pandas as pd
 
@@ -312,6 +313,22 @@ def _ranked_heap_rows(heap: List[Tuple[float, int, Dict[str, object]]]) -> pd.Da
     return out
 
 
+def _iter_omitted_candidates(limit_combinations: int | None) -> Iterable[Tuple[int, ...]]:
+    if limit_combinations is None or int(limit_combinations) >= int(TOTAL_COMBINATIONS):
+        yield from combinations(NUMBERS, OMITTED_SIZE)
+        return
+
+    limit = max(1, int(limit_combinations))
+    rng = random.Random(20260702 + limit)
+    seen: set[Tuple[int, ...]] = set()
+    while len(seen) < limit:
+        omitted = tuple(sorted(rng.sample(NUMBERS, OMITTED_SIZE)))
+        if omitted in seen:
+            continue
+        seen.add(omitted)
+        yield omitted
+
+
 def build_exhaustive_candidates(
     concursos: pd.DataFrame,
     *,
@@ -372,9 +389,7 @@ def build_exhaustive_candidates(
     evaluated = 0
     exact_historical_seen = 0
 
-    for idx, omitted in enumerate(combinations(NUMBERS, OMITTED_SIZE), start=1):
-        if limit_combinations is not None and evaluated >= int(limit_combinations):
-            break
+    for idx, omitted in enumerate(_iter_omitted_candidates(limit_combinations), start=1):
         evaluated += 1
         omitted_set = set(int(n) for n in omitted)
         selected = tuple(n for n in NUMBERS if n not in omitted_set)

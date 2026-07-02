@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -29,6 +30,37 @@ _TOP100_JOB: dict[str, Any] = {
     "error": None,
     "summary": None,
 }
+_WEB_TOP100_TOP_COUNT = 100
+_WEB_TOP100_TOP_POOL_DEFAULT = 5000
+_WEB_TOP100_EXHAUSTIVE_LIMIT_DEFAULT = 500000
+_WEB_TOP100_MAX_OVERLAP_DEFAULT = 11
+
+
+def _env_int(name: str, default: int, *, minimum: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return int(default)
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        return int(default)
+    return max(int(minimum), int(value))
+
+
+def _top100_web_settings() -> dict[str, int]:
+    top_pool = _env_int("LOTOFACIL_WEB_TOP100_POOL", _WEB_TOP100_TOP_POOL_DEFAULT, minimum=_WEB_TOP100_TOP_COUNT)
+    exhaustive_limit = _env_int(
+        "LOTOFACIL_WEB_TOP100_EXHAUSTIVE_LIMIT",
+        _WEB_TOP100_EXHAUSTIVE_LIMIT_DEFAULT,
+        minimum=_WEB_TOP100_TOP_COUNT,
+    )
+    max_overlap = _env_int("LOTOFACIL_WEB_TOP100_MAX_OVERLAP", _WEB_TOP100_MAX_OVERLAP_DEFAULT, minimum=8)
+    return {
+        "top_count": int(_WEB_TOP100_TOP_COUNT),
+        "top_pool": int(top_pool),
+        "max_overlap": int(min(15, max_overlap)),
+        "exhaustive_limit": int(exhaustive_limit),
+    }
 
 
 def _html_page() -> str:
@@ -516,6 +548,7 @@ def _top100_job_snapshot(config: AppConfig) -> dict[str, Any]:
 
 
 def _run_top100_job(config: AppConfig, logger: logging.Logger) -> None:
+    settings = _top100_web_settings()
     with _TOP100_JOB_LOCK:
         _TOP100_JOB.update(
             {
@@ -524,18 +557,20 @@ def _run_top100_job(config: AppConfig, logger: logging.Logger) -> None:
                 "finished_at": None,
                 "error": None,
                 "summary": None,
+                "settings": settings,
             }
         )
     try:
         summary = Top100Pipeline(config=config, logger=logger).predict(
-            top_count=100,
-            top_pool=10000,
-            max_overlap=11,
+            top_count=settings["top_count"],
+            top_pool=settings["top_pool"],
+            max_overlap=settings["max_overlap"],
             draw_hour=20,
             draw_minute=0,
-            exhaustive_limit=None,
+            exhaustive_limit=settings["exhaustive_limit"],
         )
         payload = summary.__dict__.copy()
+        payload["settings"] = settings
         payload["games"] = _read_csv_records(config.top100_prediction_csv_path)
         with _TOP100_JOB_LOCK:
             _TOP100_JOB.update(
@@ -560,6 +595,7 @@ def _run_top100_job(config: AppConfig, logger: logging.Logger) -> None:
 
 
 def _start_top100_job(config: AppConfig, logger: logging.Logger) -> dict[str, Any]:
+    settings = _top100_web_settings()
     with _TOP100_JOB_LOCK:
         if _TOP100_JOB.get("status") == "running":
             return dict(_TOP100_JOB)
@@ -570,6 +606,7 @@ def _start_top100_job(config: AppConfig, logger: logging.Logger) -> dict[str, An
                 "finished_at": None,
                 "error": None,
                 "summary": None,
+                "settings": settings,
             }
         )
     worker = Thread(target=_run_top100_job, args=(config, logger), daemon=True)
